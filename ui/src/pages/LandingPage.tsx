@@ -15,14 +15,16 @@ const NAV = [
   ["coba", "Coba sendiri"],
   ["prinsip", "Prinsip"],
   ["fitur", "Fitur"],
+  ["ai", "Asisten AI"],
   ["terbuka", "Terbuka"],
   ["faq", "FAQ"],
 ] as const;
-const SECTION_IDS = ["coba", "prinsip", "fitur", "mulai", "terbuka", "faq"] as const;
+const SECTION_IDS = ["coba", "prinsip", "fitur", "ai", "mulai", "terbuka", "faq"] as const;
 const DOTS = [
   ["coba", "Coba sendiri"],
   ["prinsip", "Prinsip"],
   ["fitur", "Fitur"],
+  ["ai", "Asisten AI"],
   ["mulai", "Cara mulai"],
   ["terbuka", "Terbuka"],
   ["faq", "FAQ"],
@@ -491,6 +493,117 @@ function SignalList() {
   );
 }
 
+const AI_Q = "Kenapa risiko portofolio saya terasa besar?";
+const AI_A = "Saham A memegang 62% bobot, tetapi menyumbang 78% risiko. Mengurangi porsinya menurunkan risiko lebih besar daripada porsi uangnya.";
+
+function useTyped(text: string, run: boolean, ms = 16) {
+  const reduced = useReduced();
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (reduced) {
+      setN(text.length);
+      return;
+    }
+    setN(0);
+    if (!run) return;
+    let i = 0;
+    const t = setInterval(() => {
+      i += 1;
+      setN(i);
+      if (i >= text.length) clearInterval(t);
+    }, ms);
+    return () => clearInterval(t);
+  }, [text, run, ms, reduced]);
+  return text.slice(0, n);
+}
+
+function AiMock() {
+  const [ref, seen] = useInView<HTMLDivElement>(0.3);
+  const typed = useTyped(AI_A, seen);
+  const done = typed.length >= AI_A.length;
+  return (
+    <div className="lp-viz lp-ai" ref={ref}>
+      <div className="lp-ai-log">
+        <p className="lp-ai-msg user">{AI_Q}</p>
+        <div className="lp-ai-msg bot">
+          <span className="lp-ai-used">Memakai data: Portofolio</span>
+          <p aria-hidden>{typed}{!done && <i className="lp-caret" />}</p>
+          <p className="lp-sr">{AI_A}</p>
+        </div>
+      </div>
+      <div className="lp-ai-compose" aria-hidden><span>Tulis pertanyaan…</span><b>Kirim</b></div>
+    </div>
+  );
+}
+
+type Ctx = "portofolio" | "makro" | "emiten";
+const AI_Q2 = "Apakah portofolio saya terlalu bergantung pada satu saham?";
+const CTX: readonly { id: Ctx; short: string; label: string; sent: string }[] = [
+  { id: "portofolio", short: "Portofolio", label: "Portofolio “default”", sent: "Saham A: bobot 62%, kontribusi risiko 78%\nSaham B: bobot 28%, kontribusi risiko 16%\nSaham C: bobot 10%, kontribusi risiko 6%" },
+  { id: "makro", short: "Makro", label: "Makro: IHSG dan USD/IDR", sent: "IHSG: turun 2,1% dalam 1 bulan\nUSD/IDR: naik 0,8% dalam 1 bulan" },
+  { id: "emiten", short: "Emiten", label: "Emiten: Saham A", sent: "Penutupan terakhir: 1.250\nPerubahan 1 tahun: naik 18,4%" },
+];
+
+function aiAnswer(on: readonly Ctx[]): string {
+  if (!on.includes("portofolio")) {
+    return "Tanpa data portofolio, saya hanya bisa menjawab secara umum: saham dengan porsi besar biasanya menyumbang risiko lebih besar dari porsi uangnya. Lampirkan portofolio untuk jawaban yang spesifik.";
+  }
+  const more = [
+    on.includes("emiten") ? "Kenaikan harga Saham A sebesar 18,4% dalam setahun ikut membuat porsinya makin besar." : "",
+    on.includes("makro") ? "Pasar sedang melemah (IHSG turun 2,1% dalam sebulan), sehingga saham berbobot besar paling terasa dampaknya." : "",
+  ].filter(Boolean);
+  return ["Ya. Saham A memegang 62% bobot dan menyumbang 78% risiko, jadi pergerakannya sangat menentukan.", ...more].join(" ");
+}
+
+function AiShowcase() {
+  const [on, setOn] = useState<Ctx[]>(["portofolio"]);
+  const [peek, setPeek] = useState(false);
+  const attached = CTX.filter((c) => on.includes(c.id));
+  const answer = aiAnswer(on);
+  const toggle = (id: Ctx) => setOn((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  return (
+    <div className="lp-lens">
+      <div className="lp-aishow-bar">
+        <span className="lp-live" aria-hidden />
+        <b>Asisten AI</b>
+        <span className="lp-tag">Ilustrasi</span>
+      </div>
+      <div className="lp-ai-log" aria-live="polite">
+        <p className="lp-ai-msg user">{AI_Q2}</p>
+        <div className="lp-ai-msg bot" key={answer}>
+          {attached.length > 0 && <span className="lp-ai-used">Memakai data: {attached.map((c) => c.short).join(", ")}</span>}
+          <p>{answer}</p>
+        </div>
+      </div>
+      <div className="lp-ctx">
+        <span>Lampirkan</span>
+        {CTX.map((c) => (
+          <button key={c.id} type="button" className={`lp-chipbtn${on.includes(c.id) ? " on" : ""}`} aria-pressed={on.includes(c.id)} onClick={() => toggle(c.id)}>
+            {c.label}
+          </button>
+        ))}
+        <button type="button" className="lp-link" aria-expanded={peek} onClick={() => setPeek((v) => !v)}>
+          {peek ? "Tutup" : "Lihat data yang dikirim"}
+        </button>
+      </div>
+      {peek && (
+        <pre className="lp-peek">
+          {attached.length > 0
+            ? attached.map((c) => `${c.short}\n${c.sent}`).join("\n\n")
+            : "Tidak ada data yang dikirim. AI hanya menerima pertanyaan Anda."}
+        </pre>
+      )}
+      <p className="lp-fine">Contoh ilustrasi dengan angka rekaan. Jawaban AI bisa keliru dan bukan nasihat investasi.</p>
+    </div>
+  );
+}
+
+const AI_POINTS: readonly { icon: IconName; title: string; body: string }[] = [
+  { icon: "sparkle", title: "Model pilihan Anda", body: "Sambungkan akun OpenRouter, lalu pilih model yang Anda mau, termasuk pilihan gratis." },
+  { icon: "pie", title: "Data yang Anda lampirkan", body: "AI hanya melihat ringkasan dari Portofolio, Makro, atau Emiten yang Anda pilih. Data portofolio punya pengaturan akses tersendiri." },
+  { icon: "search", title: "Terlihat, tidak tersembunyi", body: "Buka pratinjau untuk melihat persis data yang dikirim. Setiap jawaban menyebut data apa yang dipakainya." },
+];
+
 /* ---------- hero ---------- */
 
 type DemoTab = "risiko" | "kepastian" | "korelasi" | "makro";
@@ -526,6 +639,7 @@ function DemoCard() {
         {tab === "kepastian" && <CiPlot />}
         {tab === "korelasi" && <Heatmap />}
         {tab === "makro" && <MacroChart />}
+        {tab === "ai" && <AiMock />}
       </div>
       <p className="lp-caption">{DEMO_CAPTION[tab]}</p>
       {auto && !reduced && (
@@ -581,7 +695,7 @@ function Audience() {
 
 const MARQUEE = [
   "Kontribusi risiko", "Korelasi antar saham", "Sharpe ratio", "Selang kepercayaan", "Sinyal kuantitatif",
-  "IHSG", "Kurs rupiah", "Komoditas", "Suku bunga", "Diversifikasi",
+  "IHSG", "Kurs rupiah", "Komoditas", "Suku bunga", "Diversifikasi", "Asisten AI",
 ] as const;
 
 function Marquee() {
@@ -704,12 +818,12 @@ const PRINCIPLES: readonly Principle[] = [
   },
 ];
 
-type FeatId = "emiten" | "sinyal" | "portofolio" | "makro";
+type FeatId = "emiten" | "sinyal" | "portofolio" | "makro" | "ai";
 const FEATURES: readonly (TabItem<FeatId> & { hint: string; lead: string; points: readonly string[] })[] = [
-  {
-    id: "portofolio", label: "Portofolio", icon: "pie", hint: "Risiko dan Sharpe ratio",
-    lead: "Ketahui saham mana yang sebenarnya menggerakkan portofolio Anda, dan apakah imbal hasilnya sepadan dengan risikonya.",
-    points: ["Bobot dan kontribusi risiko setiap saham", "Korelasi antar saham dalam satu matriks", "Sharpe ratio dengan selang kepercayaan 95%", "Riwayat evaluasi dari hari ke hari"],
+    {
+    id: "ai", label: "Asisten AI", icon: "sparkle", hint: "Baru: tanya dengan data Anda",
+    lead: "Minta penjelasan istilah atau bacaan atas hasil Anda, dengan data yang Anda lampirkan sendiri.",
+    points: ["Pilih model dari OpenRouter, termasuk yang gratis", "Lampirkan ringkasan Portofolio, Makro, atau Emiten", "Lihat data yang dikirim dan data yang dipakai jawaban", "Jawaban tampil rapi: daftar, tabel, dan kode"],
   },
   {
     id: "makro", label: "Makro", icon: "globe", hint: "Pasar, kurs, komoditas",
@@ -732,6 +846,7 @@ function FeatureVisual({ id }: { id: FeatId }) {
   if (id === "emiten") return <PriceChart />;
   if (id === "sinyal") return <SignalList />;
   if (id === "portofolio") return <RiskBars />;
+    if (id === "ai") return <AiMock />;
   return <MacroChart />;
 }
 
@@ -760,7 +875,7 @@ function Features() {
 const STEPS = [
   ["Masuk", "Gunakan akun Google, GitHub, atau email."],
   ["Isi posisi", "Masukkan kode saham, jumlah lot, dan tanggal beli."],
-  ["Baca hasilnya", "Lihat risiko, korelasi, dan Sharpe ratio beserta penjelasannya."],
+    ["Baca hasilnya", "Lihat risiko, korelasi, dan Sharpe ratio beserta penjelasannya. Ada yang membingungkan? Tanyakan ke asisten AI."],
 ] as const;
 
 function Steps() {
@@ -797,7 +912,7 @@ const FAQ: readonly (readonly [string, ReactNode])[] = [
   ["Apakah Nirflo memberi rekomendasi beli atau jual?", "Tidak. Nirflo adalah alat riset dan edukasi yang membantu Anda memahami risiko dan konteks pasar. Keputusan investasi sepenuhnya menjadi tanggung jawab Anda."],
   ["Apakah saya perlu memahami statistik?", "Tidak. Setiap hasil disertai penjelasan dalam bahasa sehari-hari dan sorotan otomatis. Bagi yang ingin menyelam lebih dalam, rincian perhitungan tersedia di setiap panel."],
   ["Dari mana data berasal dan seberapa baru?", "Harga saham dan indikator makro dikumpulkan dari sumber data publik dan diperbarui secara berkala. Tanggal data terakhir tampil di bagian atas aplikasi, dan halaman Status data merinci kondisinya."],
-  ["Bagaimana cara berkontribusi?", <>Kode sumber Nirflo terbuka di <a href={REPO} target="_blank" rel="noopener noreferrer">GitHub</a> dengan lisensi MIT. Anda bisa melaporkan masalah, mengusulkan perbaikan, atau memulai diskusi tanpa perlu izin khusus.</>],
+  ["Apakah AI bisa melihat portofolio saya?", "Hanya jika Anda mengizinkan. Akses data diatur di Profil, bagian Koneksi AI, dan data portofolio punya pengaturan tersendiri. Untuk setiap pertanyaan, Anda memilih ringkasan mana yang dilampirkan dan bisa melihat persis isi yang dikirim."],
 ];
 
 function Faq() {
@@ -883,7 +998,8 @@ export default function LandingPage() {
               <Audience />
               <p className="lp-lead lp-in" style={delay(300)}>
                 Nirflo membawa analisis kuantitatif yang biasanya hanya ada di meja riset institusi kepada setiap
-                investor Indonesia: risiko portofolio, sinyal statistik, dan konteks makro dalam satu terminal.
+                investor Indonesia: risiko portofolio, sinyal statistik, konteks makro, dan asisten AI yang hanya
+                melihat data yang Anda izinkan.
               </p>
               <div className="lp-cta lp-in" style={delay(400)} onPointerMove={magnet} onPointerLeave={magnetReset}>
                 <Link to={LOGIN} className="lp-btn primary lg">Mulai sekarang <Icon name="arrow" size={18} /></Link>
@@ -937,6 +1053,28 @@ export default function LandingPage() {
               Dari gambaran makro, ke satu saham, hingga risiko seluruh portofolio.
             </Head>
             <Reveal kind="zoom"><Features /></Reveal>
+          </div>
+        </section>
+
+        <section id="ai" className="lp-sec">
+          <div className="lp-wrap">
+            <Head kicker="Asisten AI" title="Tanya AI, dengan data yang Anda pilih sendiri">
+              Minta penjelasan istilah atau bacaan atas hasil Anda. Anda yang menentukan model dan data yang dilihatnya.
+            </Head>
+            <div className="lp-ai-grid">
+              <div>
+                <ul className="lp-ai-points">
+                  {AI_POINTS.map((p) => (
+                    <li key={p.title}>
+                      <span className="lp-ico"><Icon name={p.icon} size={20} /></span>
+                      <span><b>{p.title}</b><small>{p.body}</small></span>
+                    </li>
+                  ))}
+                </ul>
+                <Link to={LOGIN} className="lp-more">Coba asisten di aplikasi <Icon name="arrow" size={16} /></Link>
+              </div>
+              <Reveal kind="zoom"><AiShowcase /></Reveal>
+            </div>
           </div>
         </section>
 
