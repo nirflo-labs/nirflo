@@ -50,7 +50,7 @@ query = hist.run_query
 
 # ---------------------------------------------------------------- serialisasi
 def _default(o: Any):
-    if o is pd.NaT:
+    if o is pd.NaT or o is pd.NA:
         return None
     if isinstance(o, Decimal):
         return float(o)

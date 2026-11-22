@@ -4,9 +4,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, useTickers } from "../lib/api";
 import { AI_STATUS_KEY, useAiModels, useAiStatus, type AiModel, type ChatMessage } from "../lib/ai";
-import { ago, useContextItems } from "../lib/aiContext";
+import { ago, MAX_SEND, pickContext, shareContext, useContextItems } from "../lib/aiContext";
+import { resolveContext } from "../lib/aiRetrieve";
 import { useAiScope } from "../lib/aiScope";
 import { store } from "../lib/hooks";
 import { OpenRouterConnect } from "../components/OpenRouterConnect";
@@ -15,6 +16,7 @@ import "../ai.css";
 type Flash = { kind: "ok" } | { kind: "err"; message: string };
 
 const MODEL_KEY = "aiModel";
+const AUTO_KEY = "aiAutoContext";
 const HISTORY_LIMIT = 12;
 // Tiga model "populer": potongan id yang dicocokkan ke daftar model OpenRouter yang sedang aktif.
 // Hint yang tidak ada di daftar otomatis dilewati. Ubah di sini bila peringkat OpenRouter berubah.
@@ -234,17 +236,37 @@ function ModelPicker({ value, models, loading, onChange }: {
   );
 }
 
-function ContextPicker({ skip, setSkip }: { skip: string[]; setSkip: (v: string[]) => void }) {
+function ContextPicker({ skip, setSkip, auto, setAuto }: { skip: string[]; setSkip: (v: string[]) => void; auto: boolean; setAuto: (v: boolean) => void }) {
   const items = useContextItems();
   const scope = useAiScope().data?.scope ?? "off";
   const [show, setShow] = useState(false);
   const locked = (k: string) => scope === "off" || (k === "portfolio" && scope !== "portfolio");
-  const active = items.filter((i) => !locked(i.kind) && !skip.includes(i.id));
+  const active = pickContext(items, scope, skip);
+  const activeIds = new Set(active.map((i) => i.id));
   const toggle = (id: string) => setSkip(skip.includes(id) ? skip.filter((x) => x !== id) : [...skip, id]);
   const pretty = useMemo(() => JSON.stringify(active.map(({ label, data }) => ({ label, data })), null, 2), [active]);
 
+  const autoBtn = (
+    <button
+      type="button" className="ai-link" aria-pressed={auto} disabled={scope === "off"}
+      title="Saat nyala, data yang relevan dengan pertanyaanmu diambil otomatis tanpa perlu membuka halamannya."
+      onClick={() => setAuto(!auto)}
+    >
+      Otomatis: {auto && scope !== "off" ? "nyala" : "mati"}
+    </button>
+  );
   if (!items.length) {
-    return <p className="ai-muted ai-ctx-empty">Belum ada konteks. Buka Portofolio, Makro, atau Emiten lebih dulu untuk melampirkan hasilnya.</p>;
+    return (
+      <div className="ai-ctx">
+        <div className="ai-ctx-row">
+          <span className="ai-ctx-title">Konteks</span>
+          <p className="ai-muted ai-ctx-empty ai-ctx-grow">
+            {scope === "off" ? "Akses data dimatikan." : auto ? "Data yang relevan diambil otomatis dari pertanyaanmu, misalnya kode emiten, makro, atau portofolio." : "Belum ada konteks. Buka halaman terkait atau nyalakan mode otomatis."}
+          </p>
+          {scope === "off" ? <button type="button" className="ai-link" onClick={() => void openAiSettings()}>Nyalakan akses</button> : autoBtn}
+        </div>
+      </div>
+    );
   }
   return (
     <div className="ai-ctx">
@@ -253,12 +275,17 @@ function ContextPicker({ skip, setSkip }: { skip: string[]; setSkip: (v: string[
         <div className="ai-ctx-chips">
           {items.map((i) => {
             const lock = locked(i.kind);
-            const on = !lock && !skip.includes(i.id);
+            const on = activeIds.has(i.id);
+            const over = !lock && !on && !skip.includes(i.id);
             return (
               <button
-                key={i.id} type="button" aria-pressed={on} disabled={lock}
-                className={`ai-ctx-chip${on ? " on" : ""}`}
-                title={lock ? (scope === "off" ? "Akses data dimatikan" : "Akses data portofolio dimatikan") : `Diperbarui ${ago(i.at)}`}
+                key={i.id} type="button" aria-pressed={on} disabled={lock || over}
+                className={`ai-ctx-chip${on ? " on" : ""}${over ? " over" : ""}`}
+                title={
+                  lock ? (scope === "off" ? "Akses data dimatikan" : "Akses data portofolio dimatikan")
+                    : over ? `Batas ${MAX_SEND} konteks per pertanyaan. Matikan salah satu yang lain.`
+                    : `Diperbarui ${ago(i.at)}`
+                }
                 onClick={() => toggle(i.id)}
               >
                 {i.label}
@@ -268,10 +295,15 @@ function ContextPicker({ skip, setSkip }: { skip: string[]; setSkip: (v: string[
         </div>
         {scope === "off"
           ? <button type="button" className="ai-link" onClick={() => void openAiSettings()}>Nyalakan akses</button>
-          : active.length > 0 && (
-            <button type="button" className="ai-link" aria-expanded={show} onClick={() => setShow((v) => !v)}>
-              {show ? "Tutup" : "Lihat"}
-            </button>
+          : (
+            <>
+              {autoBtn}
+              {active.length > 0 && (
+                <button type="button" className="ai-link" aria-expanded={show} onClick={() => setShow((v) => !v)}>
+                  {show ? "Tutup" : "Lihat"}
+                </button>
+              )}
+            </>
           )}
       </div>
       {show && active.length > 0 && <div className="ai-preview" role="region" aria-label="Data yang dikirim ke AI"><pre>{pretty}</pre></div>}
@@ -289,6 +321,9 @@ function AiChat() {
   const [error, setError] = useState<string | null>(null);
   const [skip, setSkip] = useState<string[]>([]);
   const [used, setUsed] = useState<Record<number, string[]>>({});
+  const [auto, setAutoState] = useState(() => store.get(AUTO_KEY) !== "0");
+  const [fetching, setFetching] = useState(false);
+  const tickers = useTickers();
   const items = useContextItems();
   const scope = useAiScope().data?.scope ?? "off";
   const abort = useRef<AbortController | null>(null);
@@ -298,6 +333,7 @@ function AiChat() {
   useEffect(() => { end.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [messages, busy]);
 
   const pickModel = (id: string) => { setModel(id); store.set(MODEL_KEY, id); };
+  const setAuto = (v: boolean) => { setAutoState(v); store.set(AUTO_KEY, v ? "1" : "0"); };
 
   const send = async (text = draft) => {
     const content = text.trim();
@@ -310,17 +346,29 @@ function AiChat() {
     const ac = new AbortController();
     abort.current = ac;
     try {
-      const context = items
-        .filter((i) => scope !== "off" && (i.kind !== "portfolio" || scope === "portfolio") && !skip.includes(i.id))
-        .map(({ id, kind, label, data }) => ({ id, kind, label, data }));
+      // Data yang relevan dengan pertanyaan diambil dulu (baca-saja), lalu digabung dengan snapshot dari halaman yang sudah dibuka.
+      let fetched: Awaited<ReturnType<typeof resolveContext>> = [];
+      if (auto && scope !== "off") {
+        setFetching(true);
+        fetched = await resolveContext(content, scope, qc, tickers.data ?? []).catch(() => []);
+        setFetching(false);
+        fetched.forEach((f) => shareContext(f.id, f.kind, f.label, f.data));
+      }
+      const merged = [...fetched, ...items.filter((i) => !fetched.some((f) => f.id === i.id))];
+      const context = pickContext(merged, scope, skip).map(({ id, kind, label, data }) => ({ id, kind, label, data }));
       const res = await chat({ model, messages: next.slice(-HISTORY_LIMIT), context, signal: ac.signal });
       setMessages([...next, { role: "assistant", content: res.content || "(Model tidak mengembalikan jawaban.)" }]);
       if (res.used?.length) setUsed((u) => ({ ...u, [next.length]: res.used as string[] }));
     } catch (e) {
       if (ac.signal.aborted) return;
-      setError(e instanceof Error ? e.message : "Permintaan gagal.");
+      setError(
+        e instanceof ApiError && (e.status === 422 || e.status === 413)
+          ? "Konteks yang dilampirkan terlalu banyak atau terlalu besar. Matikan beberapa konteks lalu coba lagi."
+          : e instanceof Error ? e.message : "Permintaan gagal.",
+      );
       if (e instanceof ApiError && e.status === 409) qc.invalidateQueries({ queryKey: AI_STATUS_KEY });
     } finally {
+      setFetching(false);
       if (!ac.signal.aborted) setBusy(false);
     }
   };
@@ -383,13 +431,13 @@ function AiChat() {
             ) : m.content}
           </div>
         ))}
-        {busy && <div className="ai-msg assistant pending" aria-label="Sedang menjawab"><i /><i /><i /></div>}
+        {busy && <div className="ai-msg assistant pending" aria-label="Sedang menjawab"><i /><i /><i />{fetching && <span className="ai-fetching">Mengambil data…</span>}</div>}
         <div ref={end} />
       </div>
 
       {error && <div className="ai-notice err" role="alert">{error}</div>}
 
-      <ContextPicker skip={skip} setSkip={setSkip} />
+      <ContextPicker skip={skip} setSkip={setSkip} auto={auto} setAuto={setAuto} />
 
       <div className="ai-compose">
         <textarea

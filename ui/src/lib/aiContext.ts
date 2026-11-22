@@ -3,6 +3,9 @@ import { useSyncExternalStore, useEffect } from "react";
 export type CtxKind = "market" | "portfolio";
 export type CtxItem = { id: string; kind: CtxKind; label: string; data: unknown; at: number };
 
+/** Snapshot yang disimpan di memori (yang terlama dibuang) dan batas yang dikirim per pertanyaan. */
+export const MAX_KEEP = 12;
+export const MAX_SEND = 6;
 const MAX_DEPTH = 5;
 const MAX_ARRAY = 40;
 
@@ -33,7 +36,7 @@ const emit = () => listeners.forEach((l) => l());
 export function shareContext(id: string, kind: CtxKind, label: string, data: unknown) {
   const clean = slim(data);
   if (clean === undefined) return;
-  items = [...items.filter((i) => i.id !== id), { id, kind, label, data: clean, at: Date.now() }];
+  items = [...items.filter((i) => i.id !== id), { id, kind, label, data: clean, at: Date.now() }].slice(-MAX_KEEP);
   emit();
 }
 
@@ -41,6 +44,14 @@ export function clearContext() {
   if (!items.length) return;
   items = [];
   emit();
+}
+
+/** Konteks yang benar-benar dikirim: sesuai izin, tidak dimatikan pengguna, dan paling baru lebih dulu sampai batas MAX_SEND. */
+export function pickContext(all: CtxItem[], scope: "off" | "public" | "portfolio", skip: string[]): CtxItem[] {
+  return all
+    .filter((i) => scope !== "off" && (i.kind !== "portfolio" || scope === "portfolio") && !skip.includes(i.id))
+    .sort((a, b) => b.at - a.at)
+    .slice(0, MAX_SEND);
 }
 
 export const useContextItems = () =>

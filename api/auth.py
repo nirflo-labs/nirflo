@@ -18,6 +18,7 @@ def current_clerk_id(request: Request) -> str:
     probe = httpx.Request("GET", "http://localhost", headers={"Authorization": request.headers.get("authorization", "")})
     state = clerk.authenticate_request(probe, AuthenticateRequestOptions(authorized_parties=PARTIES))
     if not state.is_signed_in:
+        log.warning("Autentikasi ditolak: reason=%s has_token=%s", getattr(state, "reason", None), bool(request.headers.get("authorization")))
         raise HTTPException(status_code=401, detail="Belum login")
     return state.payload["sub"]
 

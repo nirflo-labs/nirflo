@@ -222,7 +222,7 @@ class Msg(BaseModel):
 class ChatBody(BaseModel):
     model: str = Field(min_length=3, max_length=100, pattern=r"^[A-Za-z0-9._:/\-]+$")
     messages: list[Msg] = Field(min_length=1, max_length=20)
-    context: list[CtxItem] = Field(default_factory=list, max_length=8)
+    context: list[CtxItem] = Field(default_factory=list, max_length=12)
 
 
 def _load_key(user: int) -> str:
