@@ -20,7 +20,7 @@ function Row({ title, note, checked, disabled, onChange }: {
   );
 }
 
-/** Dua saklar izin: data halaman (publik) dan data portofolio (pribadi). Disimpan di server. */
+/** Dua saklar izin: data pasar (publik) dan data portofolio (pribadi). Disimpan di server. */
 export function AiAccessToggle({ flat = false }: { flat?: boolean }) {
   const q = useAiScope();
   const set = useSetAiScope();
@@ -32,13 +32,13 @@ export function AiAccessToggle({ flat = false }: { flat?: boolean }) {
         <div>
           <h2>Akses data Nirflo</h2>
           <p className="ai-muted">
-            AI tidak membaca database. Ia hanya menerima ringkasan angka dari halaman yang sudah kamu buka, dan hanya saat kamu mengirim pertanyaan.
+            AI tidak membaca database. Saat kamu bertanya, Nirflo hanya mengambil ringkasan angka yang relevan dengan pertanyaan itu, lalu mengirimnya bersama pertanyaanmu.
           </p>
         </div>
       </header>
       <Row
-        title="Data halaman" checked={scope !== "off"} disabled={busy}
-        note="Harga, makro, sinyal, dan hasil rezim yang tampil di layar. Data pasar, bukan data pribadi."
+        title="Data pasar" checked={scope !== "off"} disabled={busy}
+        note="Harga, laporan keuangan, sinyal, dan makro. Data pasar, bukan data pribadi."
         onChange={(on) => set.mutate(on ? "public" : "off")}
       />
       <Row

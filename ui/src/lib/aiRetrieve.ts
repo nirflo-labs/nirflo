@@ -12,12 +12,14 @@ type Scope = "off" | "public" | "portfolio";
 type Job = { id: string; kind: CtxKind; label: string; run: () => Promise<unknown> };
 
 const MIN = 60_000;
-const MAX_TICKERS = 3;
+const MAX_TICKERS = 2;
+const JOB_TIMEOUT = 10_000;
 const enc = encodeURIComponent;
 
 const get = <T,>(qc: QueryClient, key: unknown[], path: string, min = 5) =>
   qc.fetchQuery({ queryKey: key, queryFn: ({ signal }) => api<T>(path, undefined, { signal }), staleTime: min * MIN });
 
+const PRICE_WORDS = /harga|price|naik|turun|tren|trend|sma|tertinggi|terendah|return|imbal hasil|teknikal|volatil|gerak|chart|grafik/i;
 const FIN_WORDS = /laba|pendapatan|keuangan|laporan|revenue|margin|roe|aset|liabilitas|ekuitas|arus kas|der\b|fundamental/i;
 const SIGNAL_WORDS = /sinyal|signal|z-?score|\bsur\b|pemindai|scan/i;
 const MACRO_WORDS = /makro|macro|ihsg|kurs|usd|rupiah|dolar|suku bunga|bunga|inflasi|cpi|komoditas|emas|gold|minyak|brent|batubara|coal|nikel|tembaga|dxy|vix|pdb|cadangan devisa/i;
@@ -98,22 +100,39 @@ async function portfolioSnap(qc: QueryClient, sectors: Map<string, string>) {
   };
 }
 
-export function planContext(question: string, scope: Scope, qc: QueryClient, tickers: { ticker: string; sector?: string | null }[]): Job[] {
+/** Kode emiten: huruf kapital 4 huruf yang dikenal, atau kata (huruf apa pun) setelah "saham", "emiten", "kode", "ticker". */
+function findTickers(text: string, known: Set<string>): string[] {
+  const out = new Set<string>();
+  for (const m of text.match(/\b[A-Z]{4}\b/g) ?? []) if (known.has(m)) out.add(m);
+  for (const m of text.matchAll(/\b(?:saham|emiten|kode|ticker)\s+([A-Za-z]{4})\b/gi)) {
+    const t = m[1].toUpperCase();
+    if (known.has(t)) out.add(t);
+  }
+  return [...out];
+}
+
+/**
+ * Menentukan data apa yang perlu diambil untuk satu pertanyaan. Hanya yang disebut atau tersirat dalam pertanyaan.
+ * `recent` berisi pertanyaan pengguna sebelumnya, dipakai bila pertanyaan lanjutan tidak menyebut kode emiten.
+ */
+export function planContext(
+  question: string, scope: Scope, qc: QueryClient, tickers: { ticker: string; sector?: string | null }[], recent: string[] = [],
+): Job[] {
   if (scope === "off") return [];
   const known = new Set(tickers.map((t) => t.ticker));
   const sectors = new Map(tickers.flatMap((t) => (t.sector ? [[t.ticker, t.sector] as [string, string]] : [])));
-  const mentioned = [...new Set(question.toUpperCase().match(/\b[A-Z]{4}\b/g) ?? [])].filter((t) => known.has(t)).slice(0, MAX_TICKERS);
+  const wantsPrice = PRICE_WORDS.test(question), wantsFin = FIN_WORDS.test(question), wantsSig = SIGNAL_WORDS.test(question);
+  const topical = wantsPrice || wantsFin || wantsSig;
+  const general = !topical; // emiten disebut tanpa kata kunci khusus: harga dan laporan keuangan
 
+  let mentioned = findTickers(question, known);
+  // Pertanyaan lanjutan seperti "kalau labanya?" tidak menyebut kode, jadi ikut emiten dari pertanyaan sebelumnya.
+  for (let i = recent.length - 1; i >= 0 && topical && !mentioned.length; i--) mentioned = findTickers(recent[i], known);
+  mentioned = mentioned.slice(0, MAX_TICKERS);
   const jobs: Job[] = [];
-  const wantsFin = FIN_WORDS.test(question), wantsSig = SIGNAL_WORDS.test(question);
-  for (const t of mentioned) {
-    jobs.push({ id: `emiten:${t}:harga`, kind: "market", label: `${t} harga`, run: async () => priceSnap(t, await get<Prices>(qc, ["prices", t], `/emiten/${t}/prices`)) });
-    if (wantsFin || !wantsSig) {
-      jobs.push({ id: `emiten:${t}:keuangan`, kind: "market", label: `${t} laporan keuangan`, run: async () => finSnap(t, await get<Financials>(qc, ["fin", t], `/emiten/${t}/financials`)) });
-    }
-    if (wantsSig) {
-      jobs.push({ id: `emiten:${t}:sinyal`, kind: "market", label: `${t} riwayat sinyal`, run: async () => sigSnap(await get<HistRow[]>(qc, ["hist", t], `/emiten/${t}/scans`)) });
-    }
+
+  if (scope === "portfolio" && PORTFOLIO_WORDS.test(question)) {
+    jobs.push({ id: "portfolio:auto", kind: "portfolio", label: "Portofolio", run: () => portfolioSnap(qc, sectors) });
   }
   if (MACRO_WORDS.test(question)) {
     jobs.push({ id: "makro", kind: "market", label: "Makro", run: async () => macroSnap(await get<MacroRow[]>(qc, ["macro-ov"], "/macro/overview", 10), question) });
@@ -135,20 +154,35 @@ export function planContext(question: string, scope: Scope, qc: QueryClient, tic
       },
     });
   }
-  if (scope === "portfolio" && PORTFOLIO_WORDS.test(question)) {
-    jobs.push({ id: "portfolio:auto", kind: "portfolio", label: "Portofolio", run: () => portfolioSnap(qc, sectors) });
+  for (const t of mentioned) {
+    if (wantsPrice || general) {
+      jobs.push({ id: `emiten:${t}:harga`, kind: "market", label: `${t} harga`, run: async () => priceSnap(t, await get<Prices>(qc, ["prices", t], `/emiten/${t}/prices`)) });
+    }
+    if (wantsFin || general) {
+      jobs.push({ id: `emiten:${t}:keuangan`, kind: "market", label: `${t} laporan keuangan`, run: async () => finSnap(t, await get<Financials>(qc, ["fin", t], `/emiten/${t}/financials`)) });
+    }
+    if (wantsSig) {
+      jobs.push({ id: `emiten:${t}:sinyal`, kind: "market", label: `${t} riwayat sinyal`, run: async () => sigSnap(await get<HistRow[]>(qc, ["hist", t], `/emiten/${t}/scans`)) });
+    }
   }
   return jobs.slice(0, MAX_SEND);
 }
 
-/** Jalankan rencana di atas. Yang gagal dilewati diam-diam, jawaban tetap jalan dengan data yang berhasil diambil. */
-export async function resolveContext(question: string, scope: Scope, qc: QueryClient, tickers: { ticker: string; sector?: string | null }[]): Promise<CtxItem[]> {
-  const jobs = planContext(question, scope, qc, tickers);
-  const results = await Promise.allSettled(jobs.map((j) => j.run()));
-  const now = Date.now();
+const withTimeout = <T,>(p: Promise<T>, ms = JOB_TIMEOUT) =>
+  new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("timeout")), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+
+/** Jalankan rencana di atas secara paralel. Yang gagal atau lebih lambat dari 10 detik dilewati, jawaban tetap jalan. */
+export async function resolveContext(
+  question: string, scope: Scope, qc: QueryClient, tickers: { ticker: string; sector?: string | null }[], recent: string[] = [],
+): Promise<CtxItem[]> {
+  const jobs = planContext(question, scope, qc, tickers, recent);
+  const results = await Promise.allSettled(jobs.map((j) => withTimeout(j.run())));
   return jobs.flatMap((j, i) => {
     const r = results[i];
     const data = r.status === "fulfilled" ? slim(r.value) : undefined;
-    return data === undefined ? [] : [{ id: j.id, kind: j.kind, label: j.label, data, at: now - i }];
+    return data === undefined ? [] : [{ id: j.id, kind: j.kind, label: j.label, data }];
   });
 }

@@ -6,7 +6,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, ApiError, useTickers } from "../lib/api";
 import { AI_STATUS_KEY, useAiModels, useAiStatus, type AiModel, type ChatMessage } from "../lib/ai";
-import { ago, MAX_SEND, pickContext, shareContext, useContextItems } from "../lib/aiContext";
+import type { CtxItem } from "../lib/aiContext";
 import { resolveContext } from "../lib/aiRetrieve";
 import { useAiScope } from "../lib/aiScope";
 import { store } from "../lib/hooks";
@@ -16,7 +16,6 @@ import "../ai.css";
 type Flash = { kind: "ok" } | { kind: "err"; message: string };
 
 const MODEL_KEY = "aiModel";
-const AUTO_KEY = "aiAutoContext";
 const HISTORY_LIMIT = 12;
 // Tiga model "populer": potongan id yang dicocokkan ke daftar model OpenRouter yang sedang aktif.
 // Hint yang tidak ada di daftar otomatis dilewati. Ubah di sini bila peringkat OpenRouter berubah.
@@ -24,28 +23,30 @@ const POPULAR_HINTS = ["deepseek/deepseek-v4", "anthropic/claude-opus-5", "z-ai/
 const FREE_LIMIT = 5;
 const SEARCH_LIMIT = 8;
 const CUSTOM_ID = /^[A-Za-z0-9._:-]+\/[A-Za-z0-9._:/-]+$/;
-const STARTERS = [
+const GENERIC_STARTERS = [
   "Jelaskan Sharpe ratio dengan bahasa sederhana.",
   "Apa arti z-score pada sinyal pertumbuhan laba?",
   "Bagaimana cara membaca kontribusi risiko di sebuah portofolio?",
 ];
+const DATA_STARTERS = [
+  "Bagaimana laba bersih dan ROE BBRI dalam beberapa tahun terakhir?",
+  "Bagaimana kondisi IHSG dan kurs rupiah belakangan ini?",
+];
+const PORTFOLIO_STARTER = "Bagaimana Sharpe dan kontribusi risiko portofolioku?";
+const SIGNAL_STARTER = "Emiten mana yang punya sinyal pemindaian terkuat saat ini?";
+const MAX_INPUT_PX = 168;
+
+const isTouch = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
 type ChatReply = { content: string; model?: string; scope?: "on" | "off"; used?: string[] };
-type CtxPayload = { id: string; kind: string; label: string; data: unknown };
+type CtxPayload = Pick<CtxItem, "id" | "kind" | "label" | "data">;
 
-// Pengiriman memakai api() langsung agar snapshot halaman ikut terkirim.
+// Pengiriman memakai api() langsung agar ringkasan data ikut terkirim.
 const chat = (body: { model: string; messages: ChatMessage[]; context: CtxPayload[]; signal: AbortSignal }) =>
   api<ChatReply>("/ai/chat", undefined, {
     method: "POST", headers: { "Content-Type": "application/json" }, signal: body.signal,
     body: JSON.stringify({ model: body.model, messages: body.messages, context: body.context }),
   });
-
-// Efek cahaya mengikuti pointer pada permukaan kaca.
-const light = (e: PointerEvent<HTMLElement>) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  e.currentTarget.style.setProperty("--px", `${e.clientX - r.left}px`);
-  e.currentTarget.style.setProperty("--py", `${e.clientY - r.top}px`);
-};
 
 /**
  * Membuka Profil > Koneksi AI, tempat saklar akses data berada.
@@ -236,108 +237,46 @@ function ModelPicker({ value, models, loading, onChange }: {
   );
 }
 
-function ContextPicker({ skip, setSkip, auto, setAuto }: { skip: string[]; setSkip: (v: string[]) => void; auto: boolean; setAuto: (v: boolean) => void }) {
-  const items = useContextItems();
-  const scope = useAiScope().data?.scope ?? "off";
-  const [show, setShow] = useState(false);
-  const locked = (k: string) => scope === "off" || (k === "portfolio" && scope !== "portfolio");
-  const active = pickContext(items, scope, skip);
-  const activeIds = new Set(active.map((i) => i.id));
-  const toggle = (id: string) => setSkip(skip.includes(id) ? skip.filter((x) => x !== id) : [...skip, id]);
-  const pretty = useMemo(() => JSON.stringify(active.map(({ label, data }) => ({ label, data })), null, 2), [active]);
-
-  const autoBtn = (
-    <button
-      type="button" className="ai-link" aria-pressed={auto} disabled={scope === "off"}
-      title="Saat nyala, data yang relevan dengan pertanyaanmu diambil otomatis tanpa perlu membuka halamannya."
-      onClick={() => setAuto(!auto)}
-    >
-      Otomatis: {auto && scope !== "off" ? "nyala" : "mati"}
-    </button>
-  );
-  if (!items.length) {
-    return (
-      <div className="ai-ctx">
-        <div className="ai-ctx-row">
-          <span className="ai-ctx-title">Konteks</span>
-          <p className="ai-muted ai-ctx-empty ai-ctx-grow">
-            {scope === "off" ? "Akses data dimatikan." : auto ? "Data yang relevan diambil otomatis dari pertanyaanmu, misalnya kode emiten, makro, atau portofolio." : "Belum ada konteks. Buka halaman terkait atau nyalakan mode otomatis."}
-          </p>
-          {scope === "off" ? <button type="button" className="ai-link" onClick={() => void openAiSettings()}>Nyalakan akses</button> : autoBtn}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="ai-ctx">
-      <div className="ai-ctx-row">
-        <span className="ai-ctx-title">Konteks</span>
-        <div className="ai-ctx-chips">
-          {items.map((i) => {
-            const lock = locked(i.kind);
-            const on = activeIds.has(i.id);
-            const over = !lock && !on && !skip.includes(i.id);
-            return (
-              <button
-                key={i.id} type="button" aria-pressed={on} disabled={lock || over}
-                className={`ai-ctx-chip${on ? " on" : ""}${over ? " over" : ""}`}
-                title={
-                  lock ? (scope === "off" ? "Akses data dimatikan" : "Akses data portofolio dimatikan")
-                    : over ? `Batas ${MAX_SEND} konteks per pertanyaan. Matikan salah satu yang lain.`
-                    : `Diperbarui ${ago(i.at)}`
-                }
-                onClick={() => toggle(i.id)}
-              >
-                {i.label}
-              </button>
-            );
-          })}
-        </div>
-        {scope === "off"
-          ? <button type="button" className="ai-link" onClick={() => void openAiSettings()}>Nyalakan akses</button>
-          : (
-            <>
-              {autoBtn}
-              {active.length > 0 && (
-                <button type="button" className="ai-link" aria-expanded={show} onClick={() => setShow((v) => !v)}>
-                  {show ? "Tutup" : "Lihat"}
-                </button>
-              )}
-            </>
-          )}
-      </div>
-      {show && active.length > 0 && <div className="ai-preview" role="region" aria-label="Data yang dikirim ke AI"><pre>{pretty}</pre></div>}
-    </div>
-  );
-}
-
 function AiChat() {
   const qc = useQueryClient();
   const models = useAiModels();
+  const tickers = useTickers();
+  const scope = useAiScope().data?.scope ?? "off";
   const [model, setModel] = useState(() => store.get(MODEL_KEY) ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [skip, setSkip] = useState<string[]>([]);
-  const [used, setUsed] = useState<Record<number, string[]>>({});
-  const [auto, setAutoState] = useState(() => store.get(AUTO_KEY) !== "0");
   const [fetching, setFetching] = useState(false);
-  const tickers = useTickers();
-  const items = useContextItems();
-  const scope = useAiScope().data?.scope ?? "off";
+  const [error, setError] = useState<string | null>(null);
+  const [used, setUsed] = useState<Record<number, string[]>>({});
   const abort = useRef<AbortController | null>(null);
-  const end = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => () => abort.current?.abort(), []);
-  useEffect(() => { end.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [messages, busy]);
+
+  // Gulir ke pesan terbaru di dalam area obrolan saja, bukan seluruh halaman.
+  useEffect(() => {
+    const el = log.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages, busy]);
+
+  // Kolom tulis tumbuh mengikuti isi sampai batas tinggi tertentu.
+  useEffect(() => {
+    const el = input.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_PX)}px`;
+  }, [draft]);
 
   const pickModel = (id: string) => { setModel(id); store.set(MODEL_KEY, id); };
-  const setAuto = (v: boolean) => { setAutoState(v); store.set(AUTO_KEY, v ? "1" : "0"); };
+  const reset = () => { abort.current?.abort(); setBusy(false); setFetching(false); setMessages([]); setUsed({}); setError(null); };
+  const stop = () => { abort.current?.abort(); setBusy(false); setFetching(false); };
 
   const send = async (text = draft) => {
     const content = text.trim();
     if (!content || !model || busy) return;
+    const recent = messages.filter((m) => m.role === "user").slice(-3).map((m) => m.content);
     const next: ChatMessage[] = [...messages, { role: "user", content }];
     setMessages(next);
     setDraft("");
@@ -346,107 +285,134 @@ function AiChat() {
     const ac = new AbortController();
     abort.current = ac;
     try {
-      // Data yang relevan dengan pertanyaan diambil dulu (baca-saja), lalu digabung dengan snapshot dari halaman yang sudah dibuka.
-      let fetched: Awaited<ReturnType<typeof resolveContext>> = [];
-      if (auto && scope !== "off") {
+      // Hanya data yang relevan dengan pertanyaan ini yang diambil (baca-saja), tanpa perlu membuka halamannya.
+      let context: CtxItem[] = [];
+      if (scope !== "off") {
         setFetching(true);
-        fetched = await resolveContext(content, scope, qc, tickers.data ?? []).catch(() => []);
+        context = await resolveContext(content, scope, qc, tickers.data ?? [], recent).catch(() => []);
         setFetching(false);
-        fetched.forEach((f) => shareContext(f.id, f.kind, f.label, f.data));
+        if (ac.signal.aborted) return;
       }
-      const merged = [...fetched, ...items.filter((i) => !fetched.some((f) => f.id === i.id))];
-      const context = pickContext(merged, scope, skip).map(({ id, kind, label, data }) => ({ id, kind, label, data }));
-      const res = await chat({ model, messages: next.slice(-HISTORY_LIMIT), context, signal: ac.signal });
+      const payload = context.map(({ id, kind, label, data }) => ({ id, kind, label, data }));
+      const res = await chat({ model, messages: next.slice(-HISTORY_LIMIT), context: payload, signal: ac.signal });
       setMessages([...next, { role: "assistant", content: res.content || "(Model tidak mengembalikan jawaban.)" }]);
       if (res.used?.length) setUsed((u) => ({ ...u, [next.length]: res.used as string[] }));
     } catch (e) {
       if (ac.signal.aborted) return;
       setError(
         e instanceof ApiError && (e.status === 422 || e.status === 413)
-          ? "Konteks yang dilampirkan terlalu banyak atau terlalu besar. Matikan beberapa konteks lalu coba lagi."
+          ? "Pertanyaan atau data yang dilampirkan terlalu besar. Persingkat pertanyaan atau mulai obrolan baru."
           : e instanceof Error ? e.message : "Permintaan gagal.",
       );
       if (e instanceof ApiError && e.status === 409) qc.invalidateQueries({ queryKey: AI_STATUS_KEY });
     } finally {
-      setFetching(false);
+      if (abort.current === ac) setFetching(false);
       if (!ac.signal.aborted) setBusy(false);
     }
   };
 
+  // Di layar sentuh Enter membuat baris baru (tombol kirim yang mengirim); di desktop Enter mengirim.
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !isTouch()) {
       e.preventDefault();
       void send();
     }
   };
 
   const ready = model !== "";
+  const empty = messages.length === 0;
+  const starters = scope === "off" ? GENERIC_STARTERS : [...DATA_STARTERS, scope === "portfolio" ? PORTFOLIO_STARTER : SIGNAL_STARTER];
 
   return (
-    <section className="ai-card" aria-label="Obrolan AI" onPointerMove={light}>
+    <section className="ai-card ai-chat" aria-label="Obrolan AI">
       <header className="ai-head">
-        <div className="ai-title">
-          <div className="ai-title-row">
-            <h2>Obrolan</h2>
-            {messages.length > 0 && (
-              <button type="button" className="ai-new" onClick={() => { setMessages([]); setUsed({}); setError(null); }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-                Obrolan baru
-              </button>
-            )}
-          </div>
-          <p className="ai-muted">
-            {scope === "off" ? "AI tidak punya akses ke data atau hitungan di Nirflo." : "AI hanya melihat ringkasan yang kamu lampirkan."}
-          </p>
+        <div className="ai-model" aria-label="Model">
+          <ModelPicker value={model} models={models.data ?? []} loading={models.isPending} onChange={pickModel} />
         </div>
         <div className="ai-tools">
-          <div className="ai-model" aria-label="Model">
-            <ModelPicker value={model} models={models.data ?? []} loading={models.isPending} onChange={pickModel} />
-          </div>
-          <button type="button" className="ai-btn ghost" onClick={() => void openAiSettings()} title="Profil, lalu Koneksi AI">Akses data</button>
+          {!empty && (
+            <button type="button" className="ai-new" onClick={reset} aria-label="Obrolan baru">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span className="ai-lg">Obrolan baru</span>
+              <span className="ai-sm">Baru</span>
+            </button>
+          )}
+          <button
+            type="button" className="ai-btn ghost ai-access-btn" onClick={() => void openAiSettings()}
+            title={scope === "off" ? "Akses data dimatikan. Buka Profil, lalu Koneksi AI." : "Akses data menyala. Buka Profil, lalu Koneksi AI."}
+          >
+            <i className={`ai-state${scope === "off" ? "" : " on"}`} aria-hidden />
+            <span>Akses<span className="ai-lg"> data</span></span>
+          </button>
         </div>
       </header>
-      {models.isError && <small className="ai-muted">Daftar model tidak dapat dimuat.</small>}
+      {models.isError && <small className="ai-muted ai-pad">Daftar model tidak dapat dimuat.</small>}
 
-      <div className="ai-log" role="log" aria-live="polite">
-        {messages.length === 0 && (
-          <div className="ai-empty">
-            <p className="ai-muted">{ready ? "Mulai dengan salah satu pertanyaan ini, atau tulis sendiri." : "Pilih model untuk mulai."}</p>
-            <div className="ai-actions">
-              {STARTERS.map((q) => (
-                <button key={q} type="button" className="ai-chip" disabled={!ready || busy} onClick={() => void send(q)}>{q}</button>
-              ))}
+      <div className="ai-log" ref={log} role="log" aria-live="polite">
+        <div className={`ai-thread${empty ? " empty" : ""}`}>
+          {empty && (
+            <div className="ai-empty">
+              <h3>Mau bahas apa hari ini?</h3>
+              <p className="ai-muted">
+                {!ready ? "Pilih model untuk mulai."
+                  : scope === "off" ? "Akses data dimatikan, jadi AI menjawab tanpa data Nirflo."
+                  : scope === "public" ? "Sebut kode emiten atau topik makro, dan data yang relevan diambil otomatis. Data portofolio belum diizinkan."
+                  : "Sebut kode emiten, topik makro, atau portofoliomu, dan data yang relevan diambil otomatis."}
+                {ready && scope === "off" && (
+                  <> <button type="button" className="ai-link" onClick={() => void openAiSettings()}>Nyalakan akses</button></>
+                )}
+              </p>
+              <div className="ai-actions">
+                {starters.map((q) => (
+                  <button key={q} type="button" className="ai-chip" disabled={!ready || busy} onClick={() => void send(q)}>{q}</button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} className={`ai-msg ${m.role}`}>
-            {m.role === "assistant" ? (
-              <>
-                {used[i] && <span className="ai-used" title={used[i].join(", ")}>Memakai data: {used[i].join(", ")}</span>}
-                <Reply text={m.content} />
-              </>
-            ) : m.content}
-          </div>
-        ))}
-        {busy && <div className="ai-msg assistant pending" aria-label="Sedang menjawab"><i /><i /><i />{fetching && <span className="ai-fetching">Mengambil data…</span>}</div>}
-        <div ref={end} />
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`ai-msg ${m.role}`}>
+              {m.role === "assistant" ? (
+                <>
+                  {used[i] && <span className="ai-used" title={used[i].join(", ")}>Data: {used[i].join(", ")}</span>}
+                  <Reply text={m.content} />
+                </>
+              ) : m.content}
+            </div>
+          ))}
+          {busy && (
+            <div className="ai-msg assistant pending" aria-label="Sedang menjawab">
+              <i /><i /><i />
+              {fetching && <span className="ai-fetching">Mengambil data…</span>}
+            </div>
+          )}
+        </div>
       </div>
 
-      {error && <div className="ai-notice err" role="alert">{error}</div>}
-
-      <ContextPicker skip={skip} setSkip={setSkip} auto={auto} setAuto={setAuto} />
+      {error && <div className="ai-notice err ai-pad" role="alert">{error}</div>}
 
       <div className="ai-compose">
-        <textarea
-          value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKeyDown}
-          rows={2} maxLength={4000} placeholder="Tulis pertanyaan… (Enter kirim, Shift+Enter baris baru)" aria-label="Pesan"
-        />
-        <button type="button" className="ai-btn primary" onClick={() => void send()} disabled={busy || !draft.trim() || !ready}>Kirim</button>
+        <div className="ai-box">
+          <textarea
+            ref={input} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onKeyDown}
+            rows={1} maxLength={4000} placeholder={ready ? "Tulis pertanyaan" : "Pilih model dulu"}
+            aria-label="Pesan" enterKeyHint="send"
+          />
+          {busy ? (
+            <button type="button" className="ai-send stop" onClick={stop} aria-label="Hentikan">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden><rect x="5" y="5" width="14" height="14" rx="3" /></svg>
+            </button>
+          ) : (
+            <button type="button" className="ai-send" onClick={() => void send()} disabled={!draft.trim() || !ready} aria-label="Kirim">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            </button>
+          )}
+        </div>
+        <p className="ai-muted ai-foot">Jawaban AI bisa keliru dan bukan nasihat investasi.</p>
       </div>
-      <p className="ai-muted ai-foot">Jawaban AI bisa keliru dan bukan nasihat investasi.</p>
     </section>
   );
 }

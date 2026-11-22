@@ -1,288 +1,201 @@
-import { useEffect, useMemo, useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
-import { useFinancials, usePrices, useScanHistory, useTickerSignals, useTickers } from "../lib/api";
-import { day, lowerBound, num, pct, compact, tone } from "../lib/format";
-import { store, useColors, useParam, type Palette } from "../lib/hooks";
-import type { Annual, AnnualKey, Financials, HistRow, Prices, SignalMark, Ticker } from "../lib/types";
-import { baseOption, Chart, line, pts, stack, X, Y, yName } from "../components/Chart";
-import { pushRecent } from "../components/TickerSearch";
-import { useShareContext } from "../lib/aiContext";
-import { Async, Chip, DataTable, Kpi, Section, Segmented, Tabs, type Col } from "../components/ui";
-import RegimeTab from "./RegimeTab";
+import { useMemo, useState } from "react";
+import { usePerformance, useScanPeriods, useScanResults } from "../lib/api";
+import { daysAgo, day, num, pct, tone } from "../lib/format";
+import { useColors, useParam, type Palette } from "../lib/hooks";
+import { HORIZONS, type Performance, type PerfRow, type ScanRow, type Summary } from "../lib/types";
+import { baseOption, Chart, Y, yName } from "../components/Chart";
+import { Async, DataTable, Kpi, Section, Tabs, TextField, type Col } from "../components/ui";
+import { statusChip } from "./EmitenPage";
 
-export default function EmitenPage() {
-  const { ticker } = useParams();
-  const q = useTickers();
-  return (
-    <Async q={q} isEmpty={(d) => d.length === 0 && "Belum ada emiten aktif di tabel emitens."}>
-      {(list) => <EmitenView list={list} ticker={ticker} />}
-    </Async>
-  );
-}
+const STATUSES = ["STRONG", "MODERATE", "WEAK", "NO SIGNAL"];
+const MIN_MATURED = 30;
 
-function EmitenView({ list, ticker }: { list: Ticker[]; ticker?: string }) {
-  const [tab, setTab] = useParam("tab", "harga");
-  const current = list.find((t) => t.ticker === ticker?.toUpperCase());
-  useEffect(() => {
-    if (current) {
-      store.set("ticker", current.ticker);
-      pushRecent(current.ticker);
-      document.title = `${current.ticker} · Nirflo`;
-    }
-  }, [current]);
-
-  if (!ticker) {
-    const saved = list.find((t) => t.ticker === store.get("ticker"))?.ticker ?? list[0].ticker;
-    return <Navigate replace to={`/emiten/${saved}`} />;
-  }
+export default function SignalsPage() {
+  const [tab, setTab] = useParam("tab", "kinerja");
   return (
     <>
-      <header className="pagehead">
-        {current ? <div><h2>{current.ticker}</h2><p className="muted">{current.sector}</p></div> : <h2>{ticker.toUpperCase()}</h2>}
-      </header>
-      {!current ? (
-        <div className="state empty">Emiten “{ticker}” tidak ditemukan atau tidak aktif. Gunakan pencarian di atas untuk memilih emiten lain.</div>
-      ) : (
-        <>
-          <Tabs value={tab} onChange={setTab} tabs={[
-            { id: "harga", label: "Harga" }, { id: "keuangan", label: "Laporan keuangan" },
-            { id: "sinyal", label: "Sinyal" }, { id: "rezim", label: "Rezim" },
-          ]} />
-          <div role="tabpanel">
-            {tab === "harga" && <PriceTab ticker={current.ticker} />}
-            {tab === "keuangan" && <FinancialTab ticker={current.ticker} />}
-            {tab === "sinyal" && <SignalTab ticker={current.ticker} />}
-            {tab === "rezim" && <RegimeTab key={current.ticker} ticker={current.ticker} />}
-          </div>
-        </>
-      )}
+      <h2>Sinyal</h2>
+      <Tabs value={tab} onChange={setTab} tabs={[{ id: "kinerja", label: "Kinerja sinyal" }, { id: "scan", label: "Hasil pemindaian" }]} />
+      {tab === "kinerja" ? <PerformanceTab /> : <ScanTab />}
     </>
   );
 }
 
-const RANGES: Record<string, number> = { "1 bulan": 31, "3 bulan": 92, "6 bulan": 183, "1 tahun": 365, "3 tahun": 1095, Semua: 0 };
-
-function sma(v: number[], n: number): (number | null)[] {
-  const out: (number | null)[] = [];
-  let s = 0;
-  v.forEach((x, i) => { s += x; if (i >= n) s -= v[i - n]; out.push(i >= n - 1 ? s / n : null); });
-  return out;
-}
-
-function priceOption(c: Palette, p: Prices, days: number, ma: boolean, marks: SignalMark[]) {
-  const n = p.x.length;
-  const cut = days ? new Date(new Date(p.x[n - 1]).getTime() - days * 864e5).toISOString().slice(0, 10) : "";
-  const i0 = days ? lowerBound(p.x, cut) : 0;
-  const x = p.x.slice(i0), close = p.close.slice(i0);
-  const s = stack(c, 480, [76, 24], ["", ""]);
-  s.yAxis[0] = { ...s.yAxis[0], name: "", axisLabel: { color: c.muted, formatter: (v: number) => num(v, 0) } };
-  s.yAxis[1] = {
-    ...s.yAxis[1], name: "", scale: false, splitNumber: 2, splitLine: { show: false },
-    axisLabel: { color: c.muted, formatter: (v: number) => compact(v) },
-  };
-
-  const fill = { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: `${c.accent}40` }, { offset: 1, color: `${c.accent}00` }] };
-  const series: object[] = [
-    line("Penutupan", x, close, c.accent, { lineStyle: { width: 1.6, color: c.accent }, areaStyle: { color: fill } }),
-  ];
-  if (ma) {
-    series.push(line("MA 50", x, sma(p.close, 50).slice(i0), c.accent2, { lineStyle: { width: 1, type: "dotted", color: c.accent2 } }));
-    series.push(line("MA 200", x, sma(p.close, 200).slice(i0), c.muted, { lineStyle: { width: 1, type: "dotted", color: c.muted } }));
-  }
-  const hits = marks.flatMap((m) => {
-    const i = lowerBound(x, m.detected.slice(0, 10));
-    return i < x.length && m.detected >= x[0] ? [{ value: [x[i], close[i]], name: `${m.period} ${m.year} ${m.status}` }] : [];
-  });
-  if (hits.length) {
-    series.push({ type: "scatter", name: "Sinyal", data: hits, symbol: "triangle", symbolSize: 11, itemStyle: { color: c.up },
-      tooltip: { trigger: "item", formatter: (q: { name: string }) => q.name } });
-  }
-  const vol = p.x.flatMap((d, g) =>
-    g < i0 || p.noTrade[g] ? [] : [{
-      value: [d, p.volume[g]],
-      itemStyle: { color: g === 0 || p.close[g] >= p.close[g - 1] ? c.up : c.down, opacity: 0.6 },
-    }],
-  );
-  series.push({ type: "bar", name: "Volume", xAxisIndex: 1, yAxisIndex: 1, data: vol });
-
-  const base = baseOption(c, {
-    ...s,
-    series,
-    legend: {
-      show: ma || hits.length > 0, top: 0, icon: "roundRect",
-      data: series.slice(0, -1).map((o) => (o as { name: string }).name), textStyle: { color: c.muted },
-    },
-  }) as Record<string, unknown>;
-
-  const formatter = (ps: { seriesName: string; marker: string; value: [string, number | null] }[]) => {
-    const head = day(String(ps[0]?.value?.[0] ?? ""));
-    const rows = ps
-      .filter((q) => q.seriesName !== "Sinyal" && q.value?.[1] != null)
-      .map((q) => `${q.marker}${q.seriesName}: <b>${q.seriesName === "Volume" ? compact(q.value[1] as number) : num(q.value[1] as number, 0)}</b>`);
-    return [head, ...rows].join("<br/>");
-  };
-  return { ...base, tooltip: { ...(base.tooltip as object), formatter } };
-}
-
-function PriceTab({ ticker }: { ticker: string }) {
-  const q = usePrices(ticker);
-  const sig = useTickerSignals(ticker);
-  return (
-    <Async q={q} isEmpty={(d) => d.x.length === 0 && "Belum ada data harga untuk emiten ini."}>
-      {(p) => <PriceView p={p} marks={sig.data ?? []} ticker={ticker} />}
-    </Async>
-  );
-}
-
-function PriceView({ p, marks, ticker }: { p: Prices; marks: SignalMark[]; ticker: string }) {
-  const c = useColors();
-  const [range, setRange] = useParam("range", "1 tahun");
-  const [ma, setMa] = useParam("ma", "0");
-  const n = p.close.length, last = p.close[n - 1];
-  const chg = (k: number) => (n > k && p.close[n - 1 - k] > 0 ? last / p.close[n - 1 - k] - 1 : null);
-  const year = p.close.slice(-252);
-  // Ringkasan yang tampil di layar, dibagikan ke Asisten AI hanya bila pengguna melampirkannya.
-  const snap = useMemo(() => ({
-    ticker, as_of: p.x[n - 1], last_close: last,
-    change_1d: chg(1), change_1m: chg(21), change_1y: chg(252),
-    high_52w: Math.max(...year), low_52w: Math.min(...year),
-    sma_50: sma(p.close, 50)[n - 1], sma_200: sma(p.close, 200)[n - 1],
-    recent_signals: marks.slice(-5).map((m) => `${m.period} ${m.year} ${m.status}`),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [p, marks, ticker]);
-  useShareContext(`emiten:${ticker}:harga`, "market", `${ticker} harga`, snap);
-  const option = useMemo(() => priceOption(c, p, RANGES[range] ?? 0, ma === "1", marks), [c, p, range, ma, marks]);
+function PerformanceTab() {
+  const [since, setSince] = useParam("since", daysAgo(365));
+  const [hz, setHz] = useParam("hz", "20");
+  const [dir, setDir] = useParam("dir", "POSITIVE");
+  const [bm, setBm] = useParam("bm", "");
+  const [lag, setLag] = useParam("lag", "");
+  const [gap, setGap] = useParam("gap", "");
+  const q = usePerformance({ since, benchmark: bm.toUpperCase() || undefined, entry_lag: lag || undefined, max_gap: gap || undefined });
+  const a = q.data?.assumptions;
   return (
     <>
-      <div className="kpis">
-        <Kpi label="Penutupan terakhir" value={num(last, 0)} hint={`Per ${day(p.x[n - 1])}`} />
-        {([["1 hari", 1], ["1 bulan", 21], ["1 tahun", 252]] as const).map(([l, k]) => (
-          <Kpi key={l} label={l} value={pct(chg(k), 1, true)} tone={tone(chg(k))} />
-        ))}
-        <Kpi label="Kisaran 52 minggu" value={`${num(Math.min(...year), 0)} - ${num(Math.max(...year), 0)}`} />
-      </div>
-      <div className="toolbar">
-        <Segmented label="Rentang" value={range} onChange={setRange} options={Object.keys(RANGES).map((k) => ({ value: k, label: k }))} />
-        <label className="switch">
-          <input type="checkbox" checked={ma === "1"} onChange={(e) => setMa(e.target.checked ? "1" : "0")} />
-          <span>MA 50 &amp; 200</span>
+      <div className="formgrid">
+        <label className="field"><span>Sejak</span><input type="date" value={since} max={daysAgo(0)} onChange={(e) => e.target.value && setSince(e.target.value)} /></label>
+        <label className="field"><span>Lama tahan</span>
+          <select value={hz} onChange={(e) => setHz(e.target.value)}>{HORIZONS.map((h) => <option key={h} value={h}>+{h} hari bursa</option>)}</select>
         </label>
+        <label className="field"><span>Arah</span>
+          <select value={dir} onChange={(e) => setDir(e.target.value)}>{["POSITIVE", "NEGATIVE", "MIXED"].map((d) => <option key={d}>{d}</option>)}</select>
+        </label>
+        <TextField label="Benchmark (kode di daily_prices)" value={bm} onChange={setBm} placeholder="mis. IHSG.JK" />
       </div>
-      <div className="card">
-        <Chart option={option} height={480} label={`Grafik harga penutupan dan volume, ${range}`} />
-        <p className="muted small">Ctrl + scroll atau cubit untuk zoom, seret untuk menggeser.</p>
-      </div>
+      <details className="card">
+        <summary>Asumsi entry</summary>
+        <div className="formgrid">
+          <TextField label="Entry lag (hari bursa)" value={lag} onChange={setLag} placeholder={a ? String(a.entryLag) : "default"} />
+          <TextField label="Batas jeda entry (hari)" value={gap} onChange={setGap} placeholder={a ? String(a.maxGap) : "default"} />
+        </div>
+      </details>
+      <Async q={q} isEmpty={(d) => (!d.available ? "Kinerja sinyal memerlukan koneksi database dan belum tersedia pada mode snapshot." : d.rows.length === 0 && "Belum ada sinyal pada rentang ini.")}>
+        {(d) => <PerfView d={d} dir={dir} hz={hz} bm={bm.toUpperCase()} />}
+      </Async>
     </>
   );
 }
 
-// ------------------------------------------------------------------ Laporan keuangan
-const AMOUNTS: [AnnualKey, string][] = [
-  ["revenue", "Pendapatan"], ["gross_profit", "Laba kotor"], ["operating_profit", "Laba sebelum pajak"], ["net_income", "Laba bersih"],
-  ["operating_cash_flow", "Arus kas operasi"], ["capital_expenditure", "Belanja modal"], ["total_assets", "Total aset"],
-  ["total_liabilities", "Total liabilitas"], ["total_equity", "Total ekuitas"], ["cash_and_equivalents", "Kas dan setara kas"],
-];
-const RATIOS: [AnnualKey, string, "pct" | "x"][] = [
-  ["revenue_yoy", "Pertumbuhan pendapatan YoY", "pct"], ["net_income_yoy", "Pertumbuhan laba bersih YoY", "pct"],
-  ["gross_margin", "Margin laba kotor", "pct"], ["net_margin", "Margin laba bersih", "pct"],
-  ["roe", "ROE (laba bersih / ekuitas akhir)", "pct"], ["der", "Liabilitas / ekuitas (x)", "x"],
-];
-const VIEWS = {
-  laba: [["revenue", "Pendapatan"], ["net_income", "Laba bersih"]],
-  neraca: [["total_assets", "Total aset"], ["total_liabilities", "Total liabilitas"], ["total_equity", "Ekuitas"]],
-  kas: [["operating_cash_flow", "Arus kas operasi"], ["capital_expenditure", "Belanja modal"]],
-} as const;
-
-function financeOption(c: Palette, a: Annual, view: keyof typeof VIEWS, unit: string) {
-  const colors = [c.accent, c.accent2, c.muted];
-  const series: object[] = VIEWS[view].map(([k, name], i) => ({ type: "bar", name, data: a[k], itemStyle: { color: colors[i] }, barMaxWidth: 36 }));
-  const yAxis: object[] = [Y(c, { ...yName(unit, 56), scale: false })];
-  if (view === "laba") {
-    yAxis.push(Y(c, { ...yName("Margin (%)", 40), splitLine: { show: false } }));
-    series.push({ type: "line", name: "Margin laba bersih (%)", yAxisIndex: 1, data: a.net_margin.map((v) => (v == null ? null : v * 100)), itemStyle: { color: c.up }, lineStyle: { color: c.up, width: 1.5 } });
-  }
-  return baseOption(c, { grid: { left: 70, right: view === "laba" ? 56 : 16, top: 36, bottom: 28 }, xAxis: { type: "category", data: a.label, axisLabel: { color: c.muted } }, yAxis, series });
+function horizonOption(c: Palette, stats: Record<string, Summary>) {
+  const hs = HORIZONS.map((h) => stats[String(h)]);
+  return baseOption(c, {
+    legend: { show: false }, grid: { left: 64, right: 16, top: 20, bottom: 28 },
+    xAxis: { type: "category", data: HORIZONS.map((h) => `+${h} hari`), axisLabel: { color: c.muted }, axisLine: { lineStyle: { color: c.border } } },
+    yAxis: Y(c, yName("Rata-rata return (%)", 44)),
+    series: [
+      { type: "bar", barMaxWidth: 48, itemStyle: { color: c.accent }, data: hs.map((s) => (s.mean == null ? null : s.mean * 100)),
+        markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: c.muted }, data: [{ yAxis: 0 }] } },
+      { // whisker interval kepercayaan 95%
+        type: "custom", z: 10, silent: true, tooltip: { show: false },
+        data: hs.map((s, i) => (s.mean == null ? [i, null, null] : [i, (s.mean - s.ci) * 100, (s.mean + s.ci) * 100])),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        renderItem: (_: unknown, api: any) => {
+          const x = api.value(0) as number, lo = api.value(1) as number, hi = api.value(2) as number;
+          if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { type: "group", children: [] };
+          const a = api.coord([x, lo]), b = api.coord([x, hi]), style = { stroke: c.text, lineWidth: 1.4 };
+          const cap = (p: number[]) => ({ type: "line", shape: { x1: p[0] - 7, y1: p[1], x2: p[0] + 7, y2: p[1] }, style });
+          return { type: "group", children: [{ type: "line", shape: { x1: a[0], y1: a[1], x2: b[0], y2: b[1] }, style }, cap(a), cap(b)] };
+        },
+      },
+    ],
+  });
 }
 
-type StmtRow = { metric: string; kind: "amt" | "pct" | "x"; [year: string]: unknown };
-
-function FinancialTab({ ticker }: { ticker: string }) {
-  const q = useFinancials(ticker);
-  return (
-    <Async q={q} isEmpty={(d) => !d.annual && "Belum ada laporan tahunan untuk emiten ini."}>
-      {(d) => <FinancialView d={d} ticker={ticker} />}
-    </Async>
-  );
+function confirmOption(c: Palette, rows: { label: string; mean: number; n: number }[]) {
+  return baseOption(c, {
+    legend: { show: false }, grid: { left: 64, right: 16, top: 30, bottom: 28 },
+    xAxis: { type: "category", data: rows.map((r) => r.label), axisLabel: { color: c.muted } },
+    yAxis: Y(c, yName("Rata-rata return (%)", 44)),
+    series: [{
+      type: "bar", barMaxWidth: 48,
+      data: rows.map((r) => ({ value: r.mean * 100, itemStyle: { color: r.mean >= 0 ? c.up : c.down } })),
+      label: { show: true, position: "top", color: c.text, formatter: (p: { dataIndex: number }) => `${pct(rows[p.dataIndex].mean, 1, true)} (n=${rows[p.dataIndex].n})` },
+    }],
+  });
 }
 
-function FinancialView({ d, ticker }: { d: Financials; ticker: string }) {
+function PerfView({ d, dir, hz, bm }: { d: Performance; dir: string; hz: string; bm: string }) {
   const c = useColors();
-  const [view, setView] = useParam("view", "laba");
-  const a = d.annual!, unit = d.unit ?? "Rp miliar";
-  const snap = useMemo(() => ({
-    ticker, unit, years: a.label.slice(-6),
-    annual: Object.fromEntries([...AMOUNTS, ...RATIOS].map(([k, l]) => [l, a[k].slice(-6)])),
-    ytd: d.ytd && { period: d.ytd.period, year: d.ytd.year, rows: d.ytd.rows },
-  }), [a, d.ytd, ticker, unit]);
-  useShareContext(`emiten:${ticker}:keuangan`, "market", `${ticker} laporan keuangan`, snap);
-  const option = useMemo(() => financeOption(c, a, view as keyof typeof VIEWS, unit), [c, a, view, unit]);
-  const rows = useMemo<StmtRow[]>(() => {
-    const cells = (k: AnnualKey) => Object.fromEntries(a.label.map((y, i) => [y, a[k][i]]));
-    return [
-      ...AMOUNTS.map(([k, l]): StmtRow => ({ metric: `${l} (${unit})`, kind: "amt", ...cells(k) })),
-      ...RATIOS.map(([k, l, kind]): StmtRow => ({ metric: l, kind, ...cells(k) })),
-    ];
-  }, [a, unit]);
-  const cols: Col<StmtRow>[] = [
-    { key: "metric", label: "Metrik" },
-    ...a.label.map((y): Col<StmtRow> => ({ key: y, label: y, num: true, fmt: (v: number | null, r) => (r.kind === "pct" ? pct(v) : num(v, r.kind === "x" ? 2 : 1)) })),
-  ];
-  return (
-    <>
-      <div className="toolbar">
-        <Segmented label="Jenis laporan" value={view} onChange={setView} options={[{ value: "laba", label: "Laba rugi" }, { value: "neraca", label: "Neraca" }, { value: "kas", label: "Arus kas" }]} />
-      </div>
-      <Chart option={option} label={`Grafik ${view} tahunan`} />
-      <Section title="Ringkasan tahunan"><DataTable cols={cols} rows={rows} csv="laporan_tahunan.csv" /></Section>
-      {d.ytd && (
-        <Section title={`Tahun berjalan (kumulatif ${d.ytd.period} ${d.ytd.year})`}>
-          <DataTable csv="ytd.csv" rows={d.ytd.rows} cols={[
-            { key: "name", label: `Item (${unit})` },
-            { key: "before", label: `${d.ytd.period} ${d.ytd.year - 1}`, num: true, fmt: (v) => num(v, 1) },
-            { key: "now", label: `${d.ytd.period} ${d.ytd.year}`, num: true, fmt: (v) => num(v, 1) },
-            { key: "growth", label: "Pertumbuhan", num: true, fmt: (v) => <span className={tone(v)}>{pct(v, 1, true)}</span> },
-          ]} />
-        </Section>
-      )}
-    </>
-  );
-}
-
-// ------------------------------------------------------------------ Sinyal per emiten
-export const statusChip = (v: string | null) => (v ? <Chip kind={v.toLowerCase().replace(" ", "-")}>{v}</Chip> : "-");
-
-function SignalTab({ ticker }: { ticker: string }) {
-  const q = useScanHistory(ticker);
-  const snap = useMemo(() => q.data?.slice(0, 6).map((r) => ({
-    period: `${r.period} ${r.year}`, status: r.status, trigger: r.trigger_source, direction: r.direction,
-    confirmation: r.confirmation, growth_yoy: r.growth_yoy, z_score: r.z_score, sur: r.sur,
-  })), [q.data]);
-  useShareContext(`emiten:${ticker}:sinyal`, "market", `${ticker} riwayat sinyal`, snap);
-  const cols: Col<HistRow>[] = [
+  const s = d.stats[dir]?.[hz];
+  const negative = dir === "NEGATIVE";
+  const col = `${d.prefix}_${hz}d`;
+  const rows = useMemo(() => d.rows.filter((r) => r.direction === dir), [d.rows, dir]);
+  const hOpt = useMemo(() => horizonOption(c, d.stats[dir]), [c, d.stats, dir]);
+  const cRows = d.confirm[dir]?.[hz] ?? [];
+  const cOpt = useMemo(() => confirmOption(c, cRows), [c, cRows]);
+  const cols: Col<PerfRow>[] = [
+    { key: "ticker", label: "Ticker" },
     { key: "period", label: "Periode", get: (r) => `${r.period} ${r.year}` },
     { key: "status", label: "Status", fmt: statusChip },
     { key: "trigger_source", label: "Pemicu" },
-    { key: "direction", label: "Arah" },
-    { key: "confirmation", label: "Konfirmasi laba" },
-    { key: "growth_yoy", label: "Pertumbuhan", num: true, fmt: (v) => pct(v, 1, true) },
-    { key: "z_score", label: "Z-score", num: true, fmt: (v) => num(v, 2) },
+    { key: "z", label: "Z-score", num: true, fmt: (v) => num(v, 2) },
     { key: "sur", label: "SUR", num: true, fmt: (v) => num(v, 2) },
+    { key: "confirmation", label: "Konfirmasi laba" },
+    { key: "detected", label: "Terdeteksi", fmt: (v) => day(v) },
+    { key: "entry_price", label: "Harga entry", num: true, fmt: (v) => num(v, 0) },
+    { key: col, label: `Return +${hz} hari`, num: true, get: (r) => (r as unknown as Record<string, number | null>)[col], fmt: (v) => <span className={tone(v)}>{pct(v, 1, true)}</span> },
+    { key: "flags", label: "Catatan data", get: (r) => r.flags.join(", ") },
   ];
   return (
-    <Async q={q} isEmpty={(d) => d.length === 0 && "Belum ada hasil pemindaian untuk emiten ini."}>
-      {(rows) => <DataTable cols={cols} rows={rows} csv="riwayat_pemindaian.csv" />}
+    <>
+      <div className="kpis">
+        <Kpi label="Sinyal matang" value={s?.n ?? 0} hint={`Sinyal yang sudah mencapai +${hz} hari bursa.`} />
+        <Kpi label="Rata-rata" value={pct(s?.mean, 1, true)} tone={tone(s?.mean)} />
+        <Kpi label="Median" value={pct(s?.median, 1, true)} tone={tone(s?.median)} />
+        <Kpi label={negative ? "Turun" : "Naik"} value={pct(s?.win, 0)} hint="Porsi sinyal yang bergerak sesuai arah tesis." />
+      </div>
+      {d.benchmarkMissing && <div className="banner" role="alert">Harga benchmark {bm} tidak ditemukan, return ditampilkan tanpa penyesuaian.</div>}
+      {(s?.n ?? 0) < MIN_MATURED && <p className="muted">Sampel {s?.n ?? 0} masih di bawah {MIN_MATURED}; belum cukup untuk menarik kesimpulan.</p>}
+      <div className="two">
+        <Section title="Return menurut lama tahan"><Chart option={hOpt} height={320} label="Rata-rata return per lama tahan dengan interval kepercayaan 95%" /></Section>
+        <Section title="Return menurut konfirmasi laba">
+          {cRows.length ? <Chart option={cOpt} height={320} label="Rata-rata return per status konfirmasi laba" /> : <p className="muted">Belum ada sinyal yang matang.</p>}
+        </Section>
+      </div>
+      <DataTable cols={cols} rows={rows} sort={{ key: "detected", dir: -1 }} csv="sinyal.csv" />
+    </>
+  );
+}
+
+function ScanTab() {
+  const q = useScanPeriods();
+  return (
+    <Async q={q} isEmpty={(d) => d.length === 0 && "Belum ada hasil pemindaian. Jalankan run.py fetch terlebih dahulu."}>
+      {(ps) => <ScanView periods={ps} />}
     </Async>
   );
 }
 
-export { pts as _pts, X as _X }; // dipertahankan agar tree-shaking tidak mengeluh bila dipakai ulang
+function ScanView({ periods }: { periods: { year: number; period: string }[] }) {
+  const [sel, setSel] = useParam("periode", `${periods[0].year}-${periods[0].period}`);
+  const [year, period] = sel.split("-");
+  const [statuses, setStatuses] = useState(["STRONG", "MODERATE"]);
+  const q = useScanResults(Number(year), period);
+  const toggle = (s: string) => setStatuses((p) => (p.includes(s) ? p.filter((x) => x !== s) : [...p, s]));
+  const B = (v: number | null) => num(v == null ? null : v / 1e9, 1);
+  const cols: Col<ScanRow>[] = [
+    { key: "ticker", label: "Ticker" }, { key: "sector", label: "Sektor" },
+    { key: "status", label: "Status", fmt: statusChip }, { key: "direction", label: "Arah" },
+    { key: "trigger_source", label: "Pemicu" }, { key: "confirmation", label: "Konfirmasi laba" },
+    { key: "growth_yoy", label: "Pertumbuhan", num: true, fmt: (v) => pct(v, 1, true) },
+    { key: "sector_median_growth", label: "Median sektor", num: true, fmt: (v) => pct(v, 1, true) },
+    { key: "z_score", label: "Z-score", num: true, fmt: (v) => num(v, 2) },
+    { key: "z_source", label: "Sumber Z", fmt: (v) => ({ PEER: "Peer", HIST: "Riwayat" } as Record<string, string>)[v] ?? "-" },
+    { key: "sur", label: "SUR", num: true, fmt: (v) => num(v, 2) },
+    { key: "revenue_curr", label: "Pendapatan (miliar)", num: true, fmt: B }, { key: "revenue_prev", label: "Pembanding (miliar)", num: true, fmt: B },
+    { key: "net_income_curr", label: "Laba bersih (miliar)", num: true, fmt: B }, { key: "net_income_prev", label: "Pembanding laba (miliar)", num: true, fmt: B },
+    { key: "note", label: "Catatan" },
+  ];
+  return (
+    <>
+      <div className="toolbar">
+        <label className="field"><span>Periode</span>
+          <select value={sel} onChange={(e) => setSel(e.target.value)}>
+            {periods.map((p) => <option key={`${p.year}-${p.period}`} value={`${p.year}-${p.period}`}>{p.period} {p.year}</option>)}
+          </select>
+        </label>
+        <fieldset className="chips"><legend>Status</legend>
+          {STATUSES.map((s) => <label key={s} className="check"><input type="checkbox" checked={statuses.includes(s)} onChange={() => toggle(s)} /> {s}</label>)}
+        </fieldset>
+      </div>
+      <Async q={q}>
+        {(d) => {
+          const rows = d.rows.filter((r) => statuses.includes(r.status))
+            .sort((a, b) => (b.z_score == null ? -1 : a.z_score == null ? 1 : Math.abs(b.z_score) - Math.abs(a.z_score)));
+          return (
+            <>
+              <div className="kpis">
+                <Kpi label="Diperiksa" value={d.rows.length} />
+                <Kpi label="STRONG" value={d.counts.STRONG ?? 0} />
+                <Kpi label="MODERATE" value={d.counts.MODERATE ?? 0} />
+                <Kpi label="Tanpa skor" value={d.counts["NO SIGNAL"] ?? 0} />
+              </div>
+              <DataTable cols={cols} rows={rows} csv={`pemindaian_${period}_${year}.csv`} />
+              <p className="muted">Angka triwulan bersifat kumulatif tahun berjalan dan dibandingkan dengan periode yang sama tahun lalu.</p>
+            </>
+          );
+        }}
+      </Async>
+    </>
+  );
+}

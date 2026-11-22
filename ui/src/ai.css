@@ -18,16 +18,18 @@
 @keyframes ai-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-5px); opacity: 1; } }
 @keyframes ai-sheen { from { background-position: 160% 0; } to { background-position: -60% 0; } }
 
-/* ---------- layout ---------- */
-.ai-page { display: grid; gap: 16px; width: 100%; min-width: 0; }
+
+/* ---------- layout: halaman setinggi layar, obrolan jadi panel utama ---------- */
+.ai-page { --ai-bar-h: 58px; --ai-nav-h: 72px; display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; height: calc(100vh - 32px); height: calc(100dvh - 32px); min-height: 440px; }
+main:has(.ai-page) { padding-top: 16px; padding-bottom: 16px; }
 .ai-page > * { animation: ai-rise 0.5s var(--ease) both; }
-.ai-page > :nth-child(2) { animation-delay: 0.05s; }
-.ai-page > :nth-child(3) { animation-delay: 0.1s; }
-.ai-page > :nth-child(4) { animation-delay: 0.15s; }
+.ai-page > .ai-chat { flex: 1; min-height: 0; animation-delay: 0.05s; }
 .ai-page h2, .ai-card h2 { margin: 0; font-size: 1.125rem; font-weight: 600; }
 .ai-muted { margin: 0; color: var(--muted); font-size: 0.875rem; line-height: 1.5; }
 .ai-foot { font-size: 0.75rem; }
 .ai-err { color: var(--down); }
+.ai-pad { padding: 0 16px; }
+
 
 /* ---------- kaca (kartu, baris status, popover) ---------- */
 .ai-card:not(.flat), .ai-bar, .ai-pop {
@@ -43,7 +45,9 @@
     inset 0 -1px 0 color-mix(in srgb, var(--text) 4%, transparent),
     0 16px 40px -22px rgba(0, 0, 0, 0.6);
 }
-.ai-card { position: relative; isolation: isolate; display: grid; gap: 14px; padding: 22px; border-radius: 26px; }
+.ai-card { position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 22px; border-radius: 26px; }
+/* kartu obrolan: kolom penuh tinggi, area pesan menyerap sisa ruang */
+.ai-card.ai-chat { display: flex; flex-direction: column; gap: 0; padding: 0; }
 /* sorot garis tepi yang mengalir pelan */
 .ai-card:not(.flat)::before, .ai-bar::before {
   content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; padding: 1px;
@@ -55,19 +59,10 @@
   opacity: 0.5;
   animation: ai-sheen 14s ease-in-out infinite;
 }
-/* cahaya halus mengikuti pointer */
-.ai-card:not(.flat)::after {
-  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
-  background: radial-gradient(360px circle at var(--px, 20%) var(--py, 0%), color-mix(in srgb, var(--text) 5%, transparent), transparent 62%);
-  opacity: 0; transition: opacity 0.4s;
-}
-.ai-card:not(.flat):hover::after { opacity: 1; }
 .ai-card.flat { padding: 0; background: transparent; border: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .ai-card.flat h2 { padding-bottom: 14px; font-size: 1.25rem; border-bottom: 1px solid var(--gline); }
 .ai-card.flat .ai-head { display: grid; gap: 4px; }
 
-.ai-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.ai-head > .ai-title, .ai-card.flat .ai-head > div { display: grid; gap: 4px; }
 
 /* ---------- status ---------- */
 .ai-bar { position: relative; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px 8px 16px; border-radius: 999px; }
@@ -90,7 +85,7 @@
 .ai-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 8px 15px; font: inherit; font-size: 0.875rem; color: inherit; text-decoration: none; white-space: nowrap; background: var(--g2); border: 1px solid var(--gline); border-radius: 14px; cursor: pointer; box-shadow: inset 0 1px 0 var(--hi); transition: transform 0.3s var(--soft), border-color 0.2s, background 0.2s, box-shadow 0.25s; }
 .ai-btn:hover:not(:disabled) { background: var(--g1); transform: translateY(-1px); }
 .ai-btn:active:not(:disabled) { transform: scale(0.96); }
-.ai-btn:focus-visible, .ai-chip:focus-visible, .ai-select:focus-visible, .ai-icon-btn:focus-visible, .ai-link:focus-visible, .ai-ctx-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ai-btn:focus-visible, .ai-chip:focus-visible, .ai-select:focus-visible, .ai-icon-btn:focus-visible, .ai-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ai-btn:disabled, .ai-chip:disabled { opacity: 0.5; cursor: not-allowed; }
 .ai-btn.primary { color: #fff; border-color: transparent; background: var(--accent); box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 35%, transparent), 0 8px 20px -8px var(--glow); }
 .ai-btn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 35%, transparent), 0 12px 26px -8px var(--glow); }
@@ -139,18 +134,22 @@
 .ai-tag { padding: 1px 7px; font-size: 0.6875rem; font-style: normal; font-weight: 600; color: var(--up); border: 1px solid color-mix(in srgb, var(--up) 40%, transparent); border-radius: 999px; }
 .ai-hint { margin: 0; padding: 10px 12px; font-size: 0.8125rem; color: var(--muted); }
 
-/* ---------- kepala kartu obrolan: judul di kiri, alat di kanan ---------- */
+
+/* ---------- kepala obrolan: model di kiri, aksi di kanan ---------- */
 .ai-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.ai-title { min-width: 0; }
-.ai-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.ai-tools { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 8px; }
-.ai-model { width: 230px; max-width: 100%; }
-/* tombol obrolan baru: aksi utama di sisi judul, terpisah dari pengaturan di kanan */
-.ai-new { display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px 6px 11px; font: inherit; font-size: 0.8125rem; font-weight: 600; color: var(--accent-2, var(--accent)); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); border-radius: 999px; cursor: pointer; transition: background 0.2s, transform 0.3s var(--soft), box-shadow 0.25s; animation: ai-pop-in 0.3s var(--ease) both; }
+.ai-chat .ai-head { display: flex; flex: none; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--gline); }
+.ai-tools { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.ai-model { flex: 0 1 280px; min-width: 0; }
+.ai-model .ai-model-pop { left: 0; right: auto; width: min(360px, calc(100vw - 32px)); }
+.ai-sm { display: none; }
+/* obrolan baru: aksi yang menonjol, terpisah dari pengaturan */
+.ai-new { display: inline-flex; align-items: center; gap: 7px; padding: 7px 14px 7px 11px; font: inherit; font-size: 0.8125rem; font-weight: 600; color: var(--accent-2, var(--accent)); white-space: nowrap; background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); border-radius: 999px; cursor: pointer; transition: background 0.2s, transform 0.3s var(--soft), box-shadow 0.25s; animation: ai-pop-in 0.3s var(--ease) both; }
 .ai-new:hover { background: color-mix(in srgb, var(--accent) 24%, transparent); transform: translateY(-1px); box-shadow: 0 8px 18px -10px var(--glow); }
 .ai-new:active { transform: scale(0.96); }
-.ai-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.ai-model .ai-model-pop { left: auto; right: 0; min-width: 320px; }
+.ai-new:focus-visible, .ai-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ai-access-btn { gap: 8px; }
+.ai-state { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.ai-state.on { background: var(--up); }
 
 /* ---------- akses data (saklar, dipakai di Profil > Koneksi AI) ---------- */
 .ai-access { gap: 4px; }
@@ -165,42 +164,41 @@
 .ai-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .ai-card.flat.ai-access .ai-row:first-of-type { margin-top: 8px; }
 
-/* ---------- obrolan: area baca yang solid ---------- */
-.ai-log { display: grid; align-content: start; gap: 12px; height: clamp(360px, calc(100vh - 360px), 780px); padding: 16px; overflow-y: auto; scroll-behavior: smooth; scrollbar-width: thin; border: 1px solid var(--gline); border-radius: 20px; background: color-mix(in srgb, var(--bg) 70%, transparent); }
-.ai-empty { display: grid; gap: 10px; }
-.ai-chip { padding: 9px 16px; font: inherit; font-size: 0.8125rem; color: inherit; text-align: left; background: var(--g2); border: 1px solid var(--gline); border-radius: 999px; cursor: pointer; transition: transform 0.3s var(--soft), border-color 0.2s, background 0.2s; }
+/* ---------- obrolan: area baca yang solid dan lega ---------- */
+.ai-log { flex: 1; min-height: 0; padding: 22px 18px 8px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; background: color-mix(in srgb, var(--bg) 55%, transparent); }
+.ai-thread { display: grid; gap: 20px; width: min(100%, 860px); margin: 0 auto; }
+.ai-thread.empty { min-height: 100%; align-content: center; }
+.ai-empty { display: grid; justify-items: center; gap: 10px; text-align: center; }
+.ai-empty h3 { margin: 0; font-size: 1.375rem; font-weight: 650; letter-spacing: -0.01em; text-transform: none; color: var(--text); }
+.ai-empty .ai-actions { justify-content: center; margin-top: 8px; }
+.ai-chip { padding: 10px 16px; font: inherit; font-size: 0.8125rem; color: inherit; text-align: left; background: var(--g2); border: 1px solid var(--gline); border-radius: 18px; cursor: pointer; transition: transform 0.3s var(--soft), border-color 0.2s, background 0.2s; }
 .ai-chip:hover:not(:disabled) { transform: translateY(-2px); border-color: var(--accent); background: var(--g1); }
 .ai-chip:active:not(:disabled) { transform: scale(0.97); }
 
-.ai-msg { max-width: min(85%, 860px); padding: 11px 16px; font-size: 0.9375rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 18px; animation: ai-msg-in 0.3s var(--ease) both; }
-.ai-msg.user { justify-self: end; color: #fff; border-bottom-right-radius: 6px; background: var(--accent); }
-.ai-msg.assistant { justify-self: start; max-width: min(94%, 980px); white-space: normal; border-bottom-left-radius: 6px; background: var(--raised, var(--surface)); border: 1px solid var(--gline); }
-.ai-msg.pending { display: flex; gap: 6px; padding: 16px 18px; }
+.ai-msg { min-width: 0; font-size: 1rem; line-height: 1.65; overflow-wrap: anywhere; animation: ai-msg-in 0.3s var(--ease) both; }
+.ai-msg.user { justify-self: end; max-width: min(82%, 640px); padding: 10px 16px; white-space: pre-wrap; color: #fff; background: var(--accent); border-radius: 20px 20px 6px 20px; }
+/* jawaban AI tanpa gelembung: teks panjang lebih nyaman dibaca selebar kolom */
+.ai-msg.assistant { justify-self: stretch; padding: 0 2px; }
+.ai-msg.pending { display: flex; align-items: center; gap: 6px; padding: 8px 2px; }
 .ai-msg.pending i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: ai-bounce 1.1s ease-in-out infinite; }
 .ai-msg.pending i:nth-child(2) { animation-delay: 0.15s; }
 .ai-msg.pending i:nth-child(3) { animation-delay: 0.3s; }
+.ai-fetching { margin-left: 8px; font-size: 0.8125rem; color: var(--muted); }
 .ai-used { display: block; width: fit-content; max-width: 100%; margin-bottom: 8px; padding: 2px 10px; overflow: hidden; font-size: 0.6875rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-2, var(--accent)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
 
-/* ---------- konteks yang dilampirkan: satu baris ringkas di atas kolom tulis ---------- */
-.ai-ctx { display: grid; gap: 8px; }
-.ai-ctx-row { display: flex; align-items: center; gap: 10px; }
-.ai-ctx-title { flex: none; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-.ai-ctx-chips { display: flex; flex: 1; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.ai-ctx-chips::-webkit-scrollbar { display: none; }
-.ai-ctx-chip { flex: none; padding: 5px 12px; font: inherit; font-size: 0.75rem; color: var(--muted); white-space: nowrap; background: transparent; border: 1px solid var(--gline); border-radius: 999px; cursor: pointer; transition: border-color 0.2s, background 0.2s, color 0.2s; }
-.ai-ctx-chip:hover:not(:disabled) { border-color: var(--accent); }
-.ai-ctx-chip.on { color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.ai-ctx-chip:disabled { cursor: not-allowed; opacity: 0.45; text-decoration: line-through; }
-.ai-ctx-chip.over:disabled { text-decoration: none; border-style: dashed; }
-.ai-ctx-empty { font-size: 0.8125rem; }
-.ai-ctx-grow { flex: 1; min-width: 0; }
-.ai-fetching { align-self: center; margin-left: 8px; font-size: 0.75rem; color: var(--muted); }
-.ai-preview { max-height: 220px; overflow: auto; padding: 4px 14px; border: 1px solid var(--gline); border-radius: 14px; background: color-mix(in srgb, var(--bg) 80%, transparent); animation: ai-pop-in 0.25s var(--ease) both; scrollbar-width: thin; }
-.ai-preview pre { margin: 10px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
-
-.ai-compose { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 10px; }
-.ai-compose textarea { width: 100%; min-height: 48px; padding: 12px 16px; font: inherit; color: inherit; resize: vertical; background: var(--bg); border: 1px solid var(--gline); border-radius: 16px; box-sizing: border-box; transition: border-color 0.2s, box-shadow 0.25s; }
-.ai-compose textarea:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--glow); }
+/* kolom tulis: menempel di bawah panel, satu kotak dengan tombol kirim */
+.ai-compose { flex: none; display: grid; gap: 6px; padding: 10px 14px 12px; }
+.ai-compose > * { width: min(100%, 860px); margin-inline: auto; }
+.ai-box { display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 18px; background: var(--bg); border: 1px solid var(--gline); border-radius: 24px; transition: border-color 0.2s, box-shadow 0.25s; }
+.ai-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--glow); }
+.ai-box textarea { flex: 1; min-width: 0; max-height: 168px; padding: 9px 0; font: inherit; font-size: 1rem; line-height: 1.5; color: inherit; resize: none; background: transparent; border: 0; outline: 0; }
+.ai-box textarea::placeholder { color: var(--muted); }
+.ai-send { flex: none; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; color: #fff; background: var(--accent); border: 0; border-radius: 50%; cursor: pointer; transition: transform 0.3s var(--soft), opacity 0.2s, filter 0.2s; }
+.ai-send:hover:not(:disabled) { filter: brightness(1.1); }
+.ai-send:active:not(:disabled) { transform: scale(0.92); }
+.ai-send:disabled { opacity: 0.35; cursor: not-allowed; }
+.ai-send.stop { background: var(--g1); color: inherit; border: 1px solid var(--gline); }
+.ai-compose .ai-foot { text-align: center; }
 
 /* ---------- jawaban AI (markdown) ---------- */
 .ai-md { font-size: 0.9375rem; line-height: 1.7; }
@@ -227,15 +225,24 @@
 .ai-md th, .ai-md td { padding: 7px 10px; text-align: left; border: 1px solid var(--gline); }
 .ai-md th { font-weight: 600; background: var(--g1); }
 
-@media (max-width: 720px) {
-  .ai-head { flex-direction: column; }
-  .ai-tools { width: 100%; }
-  .ai-model { flex: 1; width: auto; }
+@media (max-width: 860px) {
+  /* ponsel dan tablet: bilah atas sticky dan navigasi bawah tetap, jadi tinggi halaman dikurangi keduanya */
+  main:has(.ai-page) { padding: 8px 8px calc(var(--ai-nav-h) + env(safe-area-inset-bottom)); }
+  .ai-page { gap: 8px; height: calc(100vh - var(--ai-bar-h) - var(--ai-nav-h) - 8px); height: calc(100dvh - var(--ai-bar-h) - var(--ai-nav-h) - 8px - env(safe-area-inset-bottom)); min-height: 360px; }
+  .ai-bar { padding: 5px 6px 5px 14px; }
 }
 @media (max-width: 600px) {
-  .ai-card { padding: 16px; border-radius: 22px; }
-  .ai-log { padding: 12px; }
-  .ai-ctx-row { flex-wrap: wrap; }
+  .ai-card.ai-chat { border-radius: 20px; }
+  .ai-chat .ai-head { padding: 8px 10px; }
+  .ai-model { flex: 1 1 auto; }
+  .ai-lg { display: none; }
+  .ai-sm { display: inline; }
+  .ai-log { padding: 16px 12px 6px; }
+  .ai-empty h3 { font-size: 1.2rem; }
+  .ai-chip { flex: 1 1 100%; }
+  .ai-msg.user { max-width: 88%; }
+  .ai-compose { padding: 8px 10px 10px; }
+  .ai-card:not(.ai-chat) { padding: 16px; border-radius: 22px; }
 }
 
 /* tanpa dukungan blur: dasar solid agar teks tetap terbaca */

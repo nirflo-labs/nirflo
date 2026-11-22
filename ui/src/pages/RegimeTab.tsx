@@ -5,7 +5,6 @@ import { useColors, type Palette } from "../lib/hooks";
 import type { RegimeParams, RegimeReady } from "../lib/types";
 import { baseOption, Chart, line, pts, stack, Y, yName, X } from "../components/Chart";
 import { DataGrid, ErrorState, Loading, NumberField, Section, Segmented } from "../components/ui";
-import { useShareContext } from "../lib/aiContext";
 
 // Samakan dengan RegimeConfig() di regime_signal.py
 type Form = { enter: number; exit: number; vol: number; refit: number; lag: number; smooth: number; band: number; rf: number; size: boolean };
@@ -94,18 +93,6 @@ export default function RegimeTab({ ticker }: { ticker: string }) {
   const [range, setRange] = useState("Semua");
   const set = <K extends keyof Form>(k: K) => (v: Form[K]) => setF((p) => ({ ...p, [k]: v }));
   const q = useRegime(ticker, toApi(f), RANGES[range], run);
-
-  const ready = q.data && q.data.state !== "running" ? (q.data as RegimeReady) : undefined;
-  const snap = useMemo(() => ready && ({
-    ticker, period: ready.period, parameters: toApi(f),
-    metrics: ready.metrics, conditional_test: ready.conditional, regime_model: ready.summary,
-    switches_per_year: ready.switchesPerYear, refits: ready.refits, thresholds: ready.thresholds,
-    volatile_regime_duration_days: ready.volatileDuration,
-    last_position: ready.position.macd_mrs[ready.position.macd_mrs.length - 1],
-    last_prob_calm: ready.comp.calm[ready.comp.calm.length - 1],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [ready, ticker]);
-  useShareContext(`emiten:${ticker}:rezim`, "market", `${ticker} analisis rezim`, snap);
 
   return (
     <>

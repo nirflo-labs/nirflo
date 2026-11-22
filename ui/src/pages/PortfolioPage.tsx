@@ -3,7 +3,6 @@ import { useTickers } from "../lib/api";
 import { day, num, pct, tone } from "../lib/format";
 import { store, useColors, useParam, useSplit } from "../lib/hooks";
 import { useCountUp, useMounted } from "../lib/motion";
-import { useShareContext } from "../lib/aiContext";
 import {
   isMix, mixName, mixParts,
   useEvaluation, useHistory, useHoldings, usePortfolioMutations, usePortfolios,
@@ -137,26 +136,6 @@ export default function PortfolioPage() {
     const corr = 200 + 56 * count;
     return Math.abs(stocks + corr - perf) <= Math.abs(stocks - (perf + corr));
   }, [e, order.length, count]);
-
-    const snap = useMemo(() => {
-    if (!e) return null;
-    const lots = new Map<string, number>();
-    rows.forEach((h) => lots.set(h.ticker, (lots.get(h.ticker) ?? 0) + h.lots));
-    const s = (b: SharpeBlock | null) =>
-      b && { sharpe: b.sharpe, ci_low: b.ci_low, ci_high: b.ci_high, verdict: b.verdict, annual_excess_return: b.annual_excess_return, annual_vol: b.annual_vol, n_obs: b.n_obs };
-    return {
-      portfolio: name, as_of: e.as_of, mode: e.mode,
-      catatan: "bobot dan kontribusi risiko dihitung dari bagian saham saja (jumlah 100%)",
-      stocks: order.map((t) => ({ ticker: t, sector: sectorOf(t), lots: lots.get(t), weight: e.weights[t], risk_contribution: e.risk_contribution[t] })),
-      sharpe: { since_buy: s(e.sharpe.since_buy), current_weights: s(e.sharpe.current_weights), equal_weight: s(e.sharpe.equal_weight) },
-      correlation_average: e.correlation.average,
-      cash: e.cash && { weight: e.cash.weight, idr: e.cash.idr, usd: e.cash.usd, usd_idr: e.cash.fx?.rate },
-      portfolio_risk: e.portfolio_risk,
-      warnings: e.warnings.slice(0, 8),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [e, rows, name, order]);
-  useShareContext(`portfolio:${name}`, "portfolio", `Portofolio ${isMix(name) ? mixParts(name).join(" + ") : name}`, snap);
 
   useEffect(() => setComposer(null), [name]);
 

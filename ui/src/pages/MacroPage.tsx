@@ -8,7 +8,6 @@ import type { MacroRow, MacroSeries } from "../lib/types";
 import { baseOption, Chart, line, X, Y } from "../components/Chart";
 import { Icon } from "../components/Icon";
 import { Async, Section, Segmented } from "../components/ui";
-import { useShareContext } from "../lib/aiContext";
 
 const YEARS: Record<string, number | null> = { "1 tahun": 1, "3 tahun": 3, "5 tahun": 5, "10 tahun": 10, Semua: null };
 
@@ -190,31 +189,6 @@ function MacroView({ rows }: { rows: MacroRow[] }) {
   };
 
   const s = useMacroSeries(chosen, YEARS[range]);
-
-  const snap = useMemo(() => {
-    const d = s.data;
-    const cor = d?.correlation;
-    const pairs: { a: string; b: string; r: number }[] = [];
-    cor?.keys.forEach((a, i) => cor.keys.forEach((b, j) => {
-      const r = cor.matrix[i][j];
-      if (j > i && r != null) pairs.push({ a: label(a), b: label(b), r });
-    }));
-    pairs.sort((x, y) => Math.abs(y.r) - Math.abs(x.r));
-    return {
-      range,
-      indicators: chosen.map((k) => {
-        const r = byKey.get(k);
-        const y = d?.series[k]?.y ?? [];
-        return {
-          key: k, name: label(k), source: r?.source, last_date: r?.last_date, last_value: r?.last_value,
-          change_1m: r?.change1m, change_12m: r?.change12m,
-          range_min: y.length ? Math.min(...y) : undefined, range_max: y.length ? Math.max(...y) : undefined,
-        };
-      }),
-      monthly_correlation_top: pairs.slice(0, 6),
-    };
-  }, [s.data, chosen, byKey, label, range]);
-  useShareContext("makro", "market", `Makro: ${chosen.map(label).join(", ")}`.slice(0, 80), snap);
 
   const startDrag = (e: PointerEvent<HTMLDivElement>) => {
     e.preventDefault();

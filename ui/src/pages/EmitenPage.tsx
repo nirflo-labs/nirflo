@@ -6,7 +6,6 @@ import { store, useColors, useParam, type Palette } from "../lib/hooks";
 import type { Annual, AnnualKey, Financials, HistRow, Prices, SignalMark, Ticker } from "../lib/types";
 import { baseOption, Chart, line, pts, stack, X, Y, yName } from "../components/Chart";
 import { pushRecent } from "../components/TickerSearch";
-import { useShareContext } from "../lib/aiContext";
 import { Async, Chip, DataTable, Kpi, Section, Segmented, Tabs, type Col } from "../components/ui";
 import RegimeTab from "./RegimeTab";
 
@@ -129,28 +128,18 @@ function PriceTab({ ticker }: { ticker: string }) {
   const sig = useTickerSignals(ticker);
   return (
     <Async q={q} isEmpty={(d) => d.x.length === 0 && "Belum ada data harga untuk emiten ini."}>
-      {(p) => <PriceView p={p} marks={sig.data ?? []} ticker={ticker} />}
+      {(p) => <PriceView p={p} marks={sig.data ?? []} />}
     </Async>
   );
 }
 
-function PriceView({ p, marks, ticker }: { p: Prices; marks: SignalMark[]; ticker: string }) {
+function PriceView({ p, marks }: { p: Prices; marks: SignalMark[] }) {
   const c = useColors();
   const [range, setRange] = useParam("range", "1 tahun");
   const [ma, setMa] = useParam("ma", "0");
   const n = p.close.length, last = p.close[n - 1];
   const chg = (k: number) => (n > k && p.close[n - 1 - k] > 0 ? last / p.close[n - 1 - k] - 1 : null);
   const year = p.close.slice(-252);
-  // Ringkasan yang tampil di layar, dibagikan ke Asisten AI hanya bila pengguna melampirkannya.
-  const snap = useMemo(() => ({
-    ticker, as_of: p.x[n - 1], last_close: last,
-    change_1d: chg(1), change_1m: chg(21), change_1y: chg(252),
-    high_52w: Math.max(...year), low_52w: Math.min(...year),
-    sma_50: sma(p.close, 50)[n - 1], sma_200: sma(p.close, 200)[n - 1],
-    recent_signals: marks.slice(-5).map((m) => `${m.period} ${m.year} ${m.status}`),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [p, marks, ticker]);
-  useShareContext(`emiten:${ticker}:harga`, "market", `${ticker} harga`, snap);
   const option = useMemo(() => priceOption(c, p, RANGES[range] ?? 0, ma === "1", marks), [c, p, range, ma, marks]);
   return (
     <>
@@ -210,21 +199,15 @@ function FinancialTab({ ticker }: { ticker: string }) {
   const q = useFinancials(ticker);
   return (
     <Async q={q} isEmpty={(d) => !d.annual && "Belum ada laporan tahunan untuk emiten ini."}>
-      {(d) => <FinancialView d={d} ticker={ticker} />}
+      {(d) => <FinancialView d={d} />}
     </Async>
   );
 }
 
-function FinancialView({ d, ticker }: { d: Financials; ticker: string }) {
+function FinancialView({ d }: { d: Financials }) {
   const c = useColors();
   const [view, setView] = useParam("view", "laba");
   const a = d.annual!, unit = d.unit ?? "Rp miliar";
-  const snap = useMemo(() => ({
-    ticker, unit, years: a.label.slice(-6),
-    annual: Object.fromEntries([...AMOUNTS, ...RATIOS].map(([k, l]) => [l, a[k].slice(-6)])),
-    ytd: d.ytd && { period: d.ytd.period, year: d.ytd.year, rows: d.ytd.rows },
-  }), [a, d.ytd, ticker, unit]);
-  useShareContext(`emiten:${ticker}:keuangan`, "market", `${ticker} laporan keuangan`, snap);
   const option = useMemo(() => financeOption(c, a, view as keyof typeof VIEWS, unit), [c, a, view, unit]);
   const rows = useMemo<StmtRow[]>(() => {
     const cells = (k: AnnualKey) => Object.fromEntries(a.label.map((y, i) => [y, a[k][i]]));
@@ -263,11 +246,6 @@ export const statusChip = (v: string | null) => (v ? <Chip kind={v.toLowerCase()
 
 function SignalTab({ ticker }: { ticker: string }) {
   const q = useScanHistory(ticker);
-  const snap = useMemo(() => q.data?.slice(0, 6).map((r) => ({
-    period: `${r.period} ${r.year}`, status: r.status, trigger: r.trigger_source, direction: r.direction,
-    confirmation: r.confirmation, growth_yoy: r.growth_yoy, z_score: r.z_score, sur: r.sur,
-  })), [q.data]);
-  useShareContext(`emiten:${ticker}:sinyal`, "market", `${ticker} riwayat sinyal`, snap);
   const cols: Col<HistRow>[] = [
     { key: "period", label: "Periode", get: (r) => `${r.period} ${r.year}` },
     { key: "status", label: "Status", fmt: statusChip },

@@ -10,7 +10,6 @@ import { OpenRouterConnect } from "./components/OpenRouterConnect";
 import { TickerSearch } from "./components/TickerSearch";
 import { Empty, ErrorBoundary, ErrorState, Loading } from "./components/ui";
 import { AiAccessToggle } from "./components/AiAccess";
-import { clearContext } from "./lib/aiContext";
 
 const HomePage = lazy(() => import("./pages/HomePage"));
 const EmitenPage = lazy(() => import("./pages/EmitenPage"));
@@ -99,7 +98,6 @@ export default function App() {
   const { pathname, search } = useLocation();
   const { user } = useUser();
   const side = useSidebar();
-  useEffect(() => () => clearContext(), [user?.id]);
   const m = meta.data;
   const stale = m?.ageDays != null && m.ageDays > 4;
   const warn = m?.source === "snapshot" || stale;

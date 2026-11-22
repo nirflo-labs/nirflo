@@ -125,12 +125,4 @@ export function useDisconnectAi() {
   });
 }
 
-export const askAi = (o: { model: string; messages: ChatMessage[]; signal?: AbortSignal }) =>
-  api<{ content: string; model: string }>("/ai/chat", undefined, {
-    method: "POST",
-    headers: JSON_HEADERS,
-    body: JSON.stringify({ model: o.model, messages: o.messages }),
-    signal: o.signal,
-  });
-
 export const settingsUrl = (keyHash: string | null) => (keyHash ? `https://openrouter.ai/keys/${keyHash}` : null);
