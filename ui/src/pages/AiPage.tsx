@@ -38,6 +38,50 @@ const MAX_INPUT_PX = 168;
 
 const isTouch = () => typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
 
+// Riwayat obrolan disimpan sampai "Obrolan baru" ditekan, jadi tetap ada setelah refresh atau pindah halaman.
+const CHAT_KEY = "aiChat";
+const STORED_LIMIT = 100; // batas jumlah pesan yang disimpan, supaya penyimpanan tidak membengkak
+type SavedChat = { messages: ChatMessage[]; used: Record<number, string[]>; pending: string };
+
+const EMPTY_CHAT: SavedChat = { messages: [], used: {}, pending: "" };
+
+function loadChat(): SavedChat {
+  try {
+    const raw = store.get(CHAT_KEY);
+    if (!raw) return EMPTY_CHAT;
+    const d = JSON.parse(raw) as { messages?: unknown; used?: unknown };
+    if (!Array.isArray(d.messages)) return EMPTY_CHAT;
+    const valid = d.messages.every(
+      (m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
+    );
+    if (!valid) return EMPTY_CHAT;
+    const messages = d.messages as ChatMessage[];
+    const used = d.used && typeof d.used === "object" ? (d.used as Record<number, string[]>) : {};
+    // Pertanyaan terakhir yang belum sempat dijawab (halaman ditutup saat menunggu) dikembalikan ke kolom tulis.
+    const last = messages[messages.length - 1];
+    if (last?.role === "user") return { messages: messages.slice(0, -1), used, pending: last.content };
+    return { messages, used, pending: "" };
+  } catch {
+    return EMPTY_CHAT;
+  }
+}
+
+function saveChat(messages: ChatMessage[], used: Record<number, string[]>) {
+  try {
+    if (!messages.length) { store.set(CHAT_KEY, ""); return; }
+    // Bila terlalu panjang, simpan pesan terbaru saja. Indeks "used" digeser ikut.
+    const drop = Math.max(0, messages.length - STORED_LIMIT);
+    const kept: Record<number, string[]> = {};
+    for (const [k, v] of Object.entries(used)) {
+      const i = Number(k) - drop;
+      if (i >= 0) kept[i] = v;
+    }
+    store.set(CHAT_KEY, JSON.stringify({ messages: messages.slice(drop), used: kept }));
+  } catch {
+    // Penyimpanan penuh atau diblokir: obrolan tetap berjalan, hanya tidak tersimpan.
+  }
+}
+
 type ChatReply = { content: string; model?: string; scope?: "on" | "off"; used?: string[] };
 type CtxPayload = Pick<CtxItem, "id" | "kind" | "label" | "data">;
 
@@ -243,17 +287,21 @@ function AiChat() {
   const tickers = useTickers();
   const scope = useAiScope().data?.scope ?? "off";
   const [model, setModel] = useState(() => store.get(MODEL_KEY) ?? "");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [draft, setDraft] = useState("");
+  const [saved] = useState(loadChat);
+  const [messages, setMessages] = useState<ChatMessage[]>(saved.messages);
+  const [draft, setDraft] = useState(saved.pending);
   const [busy, setBusy] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [used, setUsed] = useState<Record<number, string[]>>({});
+  const [used, setUsed] = useState<Record<number, string[]>>(saved.used);
   const abort = useRef<AbortController | null>(null);
   const log = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => () => abort.current?.abort(), []);
+
+  // Simpan setiap kali obrolan berubah. "Obrolan baru" mengosongkan pesan, sehingga riwayat ikut terhapus.
+  useEffect(() => { saveChat(messages, used); }, [messages, used]);
 
   // Gulir ke pesan terbaru di dalam area obrolan saja, bukan seluruh halaman.
   useEffect(() => {
