@@ -152,6 +152,7 @@ The regime model is computed in a separate process and cached for one hour. Chan
 - Signal performance needs a live database connection. In snapshot mode that page is empty.
 - Browser verification for IDX needs a person present. A scheduled run stops if a challenge appears.
 - Regime fits are recomputed after an API restart, because the cache is in memory.
+- UI added
 
 ## Disclaimer
 
